@@ -1,6 +1,9 @@
 import json
+import math
+from typing import List
+import klampt
 import klampt.plan as kp
-from klampt.math import se3
+from klampt.math import vectorops as vo
 import cvxpy as cp
 import numpy as np
 from consts import SETTINGS_PATH
@@ -19,143 +22,111 @@ class Tracker:
         self.left_name = "left_tool_link"
         self.right_name = "right_tool_link"
         self.lock_arms = lock_arms
-        self.world_model = world_model
-        self.robot_model = self.world_model.robot(0)
+        self.world_model: klampt.WorldModel = world_model
+        self.robot_model: klampt.RobotModel = self.world_model.robot(0)
         self.cspace = kp.robotcspace.RobotCSpace(self.robot_model)
-        self.left_dofs = self.settings["left_arm_dofs"]
-        self.right_dofs = self.settings["right_arm_dofs"]
-        self.base_dofs = self.settings["base_dofs"]
-        self.num_total_dofs = (
-            len(self.left_dofs) + len(self.right_dofs) + len(self.base_dofs)
-        )
+        self.left_dofs: List[int] = self.settings["left_arm_dofs"]
+        self.right_dofs: List[int] = self.settings["right_arm_dofs"]
+        self.base_dofs: List[int] = self.settings["base_dofs"]
+        self.num_arm_dofs = len(self.left_dofs) + len(self.right_dofs)
+        self.num_total_dofs = self.num_arm_dofs + len(self.base_dofs)
 
         # Constraint limits
-        self.v_lim = self.settings["limb_velocity_limits"]
-        self.q_upper_lim = self.settings["limb_position_upper_limits"]
-        self.q_lower_lim = self.settings["limb_position_lower_limits"]
+        self.v_lim = np.array(self.settings["limb_velocity_limits"])
+        self.base_v_lim = np.array(self.settings["base_velocity_limits"])
+        self.q_upper_lim = np.array(self.settings["limb_position_upper_limits"])
+        self.q_lower_lim = np.array(self.settings["limb_position_lower_limits"])
+        self.full_q_upper_lim = np.concatenate((
+            self.q_upper_lim, self.q_upper_lim
+        ))
+        self.full_q_lower_lim = np.concatenate((
+            self.q_lower_lim, self.q_lower_lim
+        ))
         self.a_lim = 1
-
 
         # Unified controller optimization problems
         self.m = 6  # Dimensionality of a twist
         self.num_arms = 2
         self.num_klampt_dofs = len(self.robot_model.getConfig())
-        self.ls_target_twist_param = cp.Parameter(self.m * self.num_arms, name="v_target")
-        self.ls_jac_param = cp.Parameter((self.m * self.num_arms, self.num_total_dofs), name="jacobian")
-        self.ls_config_param = cp.Parameter(self.num_klampt_dofs, name="config")
-        self.ls_q_dot_var = cp.Variable(self.num_total_dofs,name="qdot")
+        ## Initial LS problem
+        self.ls_target_twist_param = cp.Parameter(
+            self.m * self.num_arms, name="v_target")
+        self.jac_param = cp.Parameter(
+            (self.m * self.num_arms, self.num_total_dofs), name="jacobian")
+        self.ls_q_dot_var = cp.Variable(self.num_total_dofs, name="qdot")
         self.ls_objective = cp.Minimize(
-            cp.norm2(self.ls_jac_param @ self.ls_q_dot_var - self.ls_target_twist_param)
-            ** 2
+            cp.norm2(
+                self.jac_param @ self.ls_q_dot_var
+                    - self.ls_target_twist_param) ** 2
         )
-        self.ls_constraints = self.build_constraints(
-            self.ls_q_dot_var,
-            self.ls_config_param
-        )
-        self.ls_prob = cp.Problem(self.ls_objective, self.ls_constraints)
+        self.p_upper_lim_param = cp.Parameter(
+            len(self.left_dofs) + len(self.right_dofs),
+            name="p_upper_lim_param")
+        self.p_lower_lim_param = cp.Parameter(
+            len(self.left_dofs) + len(self.right_dofs),
+            name="p_lower_lim_param")
+        self.right_twist_con_param = cp.Parameter(
+            self.m, name="right_twist_con_param")
+        self.constraints = self.build_ls_constraints()
+        self.ls_prob = cp.Problem(self.ls_objective, self.constraints)
+        ## Null space optimization
         self.max_nullity = min(self.num_total_dofs, self.m * self.num_arms)
-        self.resid_null_param = cp.Parameter((self.num_total_dofs, self.max_nullity),name="nullspace")
-        self.resid_q_dot_part_param = cp.Parameter(self.num_total_dofs,name="qdot_part")
+        self.null_param = cp.Parameter(
+            (self.num_total_dofs, self.max_nullity),name="nullspace")
+        self.q_dot_part_param = cp.Parameter(self.num_total_dofs,name="qdot_part")
         self.resid_var = cp.Variable(self.max_nullity,name="residual")
 
-    def get_q_dot(self, target: np.ndarray):
-        pass
+    def get_q_dot(self, cfg: List[float], target: np.ndarray):
+        val, res = self.get_ls_soln(cfg, target)
+        return val
 
-    def get_ls_soln(self, left_link_name, right_link_name,
-        left_desired_twist, right_desired_twist
-    ):
-        current_config = self.robot_model.getConfig()
-        avail_jac = self.get_jacobian(left_link_name, right_link_name)
-        self.ls_jac_param.value = avail_jac
-        self.ls_config_param.value = current_config
-        b_theta = current_config[self.base_dofs[-1]]
-        self.c_b_theta_param.value = np.cos(b_theta)
-        self.s_b_theta_param.value = np.sin(b_theta)
-        self.ls_target_twist_param.value = np.concatenate((
-            left_desired_twist, right_desired_twist ))
+    def get_ls_soln(self, cfg: List[float], target: np.ndarray):
+        self.fill_ls_params(cfg)
+        self.ls_target_twist_param.value = target
         res = self.ls_prob.solve()
-        return self.ls_q_dot_var.value, avail_jac, res
+        return self.ls_q_dot_var.value, res
 
-    def build_constraints(self, q_dot, cfg, c_b_theta, s_b_theta):
-        """Build up the constraints for the CP that computes
-        the optimal q_dot for the unified controller.
-            cfg: cp.Parameter
-                Rmk, since this is a cp.Parameter, it doesn't
-                actually contain values, so numpy operations
-                such as cos cannot be performed on it. Thus,
-                cos and sin are given separately
-            c_b_theta: cp.Parameter
-                cos of the yaw of the base
-            s_b_theta: cp.Parameter
-                cos of the yaw of the base
-        """
-        # Non-holonomic constraint on base movement
-        # q_dot_y cos(theta) - q_dot_x sin(theta) = 0
-        con = [
-            #TODO make DPP
-            q_dot[-2] * c_b_theta - q_dot[-3] * s_b_theta == 0
-        ]
-        # Velocity limit on the base
-        base_vel_lims = trina.settings.base_velocity_limits()
-        con.append(cp.norm(q_dot[-3:-1]) <= base_vel_lims[0])
-        con.append(cp.abs(q_dot[-1]) <= base_vel_lims[1])
-        # Abs velocity limits
-        for i, v_lim in enumerate(trina.settings.limb_velocity_limits()):
-            con.append(cp.abs(q_dot[i]) <= v_lim)
-            con.append(cp.abs(q_dot[i + len(self.left_dofs)]) <= v_lim)
-        #TODO make DPP
-        con.extend(self.position_constraints(q_dot, cfg))
-        # Avoid most imminent collision
-        # s = time.monotonic()
-        # jac_a, jac_b, dist, vec = self.get_closest_jac()
-        # print(f"Col time: {time.monotonic() - s}")
-        # vec = np.array(vec)
-        # if np.linalg.norm(vec) > 0:
-        #   vec /= np.linalg.norm(vec)
-        # vel_a = jac_a @ q_dot
-        # vel_b = jac_b @ q_dot
-        # # relative speed of points towards each other
-        # col_speed = vel_a @ vec - vel_b @ vec
-        # accel_lim = 2.0
-        # con.append(col_speed <= (2 * accel_lim * dist)**0.5)
-        return con
+    def fill_ls_params(self, cfg):
+        self.robot_model.setConfig(cfg)
+        # Fill in jacobian param
+        self.jac_param.value = self.get_jacobian()
+        # Set vel limits to enforce position constraints
+        j_cfg = self.get_arm_cfg(cfg)
+        self.p_upper_lim_param.value = np.sqrt(
+            np.maximum(2 * self.a_lim * (self.full_q_upper_lim - j_cfg), 0)
+        )
+        self.p_lower_lim_param.value = -np.sqrt(
+            np.maximum(2 * self.a_lim * (j_cfg - self.full_q_lower_lim), 0)
+        )
+        tf_l = self.robot_model.link(self.left_name).getTransform()
+        tf_r = self.robot_model.link(self.right_name).getTransform()
 
-    def position_constraints(self, q_dot, cfg):
+    def build_ls_constraints(self):
         con = []
-        ang_accel_lim = 0.5
-        upper_lims = trina.settings.limb_position_upper_limits()
-        # TODO make DPP
-        for i, u_lim in enumerate(upper_lims):
-            left_u_lim = u_lim
-            if i == 2: # Constrain elbow to bend out
-                left_u_lim = 0.1
-            left_u_vel_lim = (2 * ang_accel_lim
-                    * cp.max(left_u_lim - cfg[self.left_dofs[i]], 0))**0.5
-            con.append(q_dot[i] <= left_u_vel_lim)
-            con.append(q_dot[i + len(self.left_dofs)]
-                <= (2 * ang_accel_lim
-                    * (u_lim - cfg[self.right_dofs[i]]))**0.5 )
-        for i, l_lim in enumerate(trina.settings.limb_position_lower_limits()):
-            con.append(q_dot[i]
-                >= -(2 * ang_accel_lim
-                    * (cfg[self.left_dofs[i]] - l_lim))**0.5 )
-            right_l_lim = l_lim
-            if i == 2: # Constrain elbow to bend out
-                right_l_lim = -0.1
-            right_l_vel_lim = (2 * ang_accel_lim
-                    * cp.max(cfg[self.right_dofs[i]] - l_lim, 0))**0.5
-            con.append(q_dot[i + len(self.left_dofs)]
-                >= -right_l_vel_lim)
+        # Absolute velocity limits
+        con.append(cp.abs(self.ls_q_dot_var)
+            <= np.concatenate((self.v_lim, self.v_lim, self.base_v_lim)))
+        # Position limits
+        con.append(self.ls_q_dot_var[:self.num_arm_dofs]
+            <= self.p_upper_lim_param)
+        con.append(self.ls_q_dot_var[:self.num_arm_dofs]
+            >= self.p_lower_lim_param)
         return con
 
-    def get_jacobian(self, left_link_name, right_link_name):
+    def get_jacobian(self) -> np.ndarray:
+        """Get the (2 * self.m, self.num_total_dofs) jacobian that has the
+        jacobian of the left-hand point as the top self.m rows, then the
+        jacobian of the right-hand point.
+
+        Returns:
+            np.ndarray: Left jacobian stacked on top of right jacobian
+                (in module convention).
+        """
         # Jacobian (column) order is left arm, right arm, base
-        left_full_robot_jac = np.vstack((
-            self.robot_model.link(left_link_name).getOrientationJacobian(),
-            self.robot_model.link(left_link_name).getPositionJacobian([0,0,0])))
-        right_full_robot_jac = np.vstack((
-            self.robot_model.link(right_link_name).getOrientationJacobian(),
-            self.robot_model.link(right_link_name).getPositionJacobian([0,0,0])))
+        left_full_robot_jac = np.array(
+            self.robot_model.link(self.left_name).getJacobian([0,0,0]))
+        right_full_robot_jac = np.array(
+            self.robot_model.link(self.right_name).getJacobian([0,0,0]))
         left_jac = self.pack_jac(left_full_robot_jac)
         right_jac = self.pack_jac(right_full_robot_jac)
         return np.vstack([ left_jac, right_jac ])
@@ -171,9 +142,8 @@ class Tracker:
         Returns:
             np.ndarray: Packed jacobian fitting module's convention.
         """
-        total_dofs = len(self.left_dofs) + len(self.right_dofs) + len(self.base_dofs)
         klampt_jac = np.array(klampt_jac)
-        avail_jac = np.zeros((len(klampt_jac), total_dofs))
+        avail_jac = np.zeros((len(klampt_jac), self.num_total_dofs))
         for i, ind in enumerate(self.left_dofs):
             avail_jac[:, i] = klampt_jac[:, ind]
         for i, ind in enumerate(self.right_dofs):
@@ -183,17 +153,61 @@ class Tracker:
                 klampt_jac[:, ind]
         return avail_jac
 
-    def get_null_basis(self, s: np.ndarray, vh: np.ndarray):
+    def get_null_basis(self, jac: np.ndarray) -> np.ndarray:
+        """For the input jacobian, find a basis for its null space.
+
+        Args:
+            jac (np.ndarray): Jacobian (or generic matrix) to get null basis
+                for.
+
+        Returns:
+            np.ndarray: For jac with shape (M, N), jac = u s vh, v has shape
+                (N, N). Return a matrix of shape (N, ?) where ? is the
+                dimension of jac's null space.
+        """
+        _, s, vh = np.linalg.svd(jac)
         v: np.ndarray = vh.T
-        v_extra_cols = max(v.shape[1] - s.shape[0], 0)
-        nullity = v_extra_cols
-        null_inds = []
-        for i, val in enumerate(s):
-            if val == 0:
-                nullity += 1
-                null_inds.append(i)
-        null_basis = np.empty((v.shape[0], nullity))
-        null_basis[:, :v_extra_cols] = v[:, -v_extra_cols:]
-        for i, ind in null_inds:
-            null_basis[:, v_extra_cols + i] = v[:, ind]
-        return null_basis
+        return v[:, np.sum(s > 0):]
+
+    def get_arm_cfg(self, cfg: List[float]) -> np.ndarray:
+        return np.array(cfg)[self.left_dofs + self.right_dofs]
+
+
+def mirror_arm_config(config):
+    """Mirrors an arm configuration from left to right or vice versa. """
+    RConfig = []
+    RConfig.append(-config[0])
+    RConfig.append(-config[1]-math.pi)
+    RConfig.append(-config[2])
+    RConfig.append(-config[3]+math.pi)
+    RConfig.append(-config[4])
+    RConfig.append(-config[5])
+    return RConfig
+
+
+if __name__ == "__main__":
+    world = klampt.WorldModel()
+    world.loadFile("Model/worlds/TRINA_world_cholera.xml")
+    robot_model: klampt.RobotModel = world.robot(0)
+    with open(SETTINGS_PATH, "r") as f:
+        settings = json.load(f)
+    q = robot_model.getConfig()
+    cfg_l = [-4.635901893690355, 5.806223419961121, 1.082262209315542, -2.753160794116381, 1.0042225011740618, 4.022876408436895]
+    for i, d in enumerate(settings["left_arm_dofs"]):
+        q[d] = cfg_l[i]
+    cfg_r = mirror_arm_config(cfg_l)
+    for i, d in enumerate(settings["right_arm_dofs"]):
+        q[d] = cfg_r[i]
+    robot_model.setConfig(q)
+    t = Tracker(world, True)
+    q_dot = t.get_q_dot(q, np.zeros(12))
+    print("Final q dot", q_dot)
+    full_q_dot = np.zeros(len(q))
+    for i, d in enumerate(settings["left_arm_dofs"]):
+        full_q_dot[d] = q_dot[i]
+    for i, d in enumerate(settings["right_arm_dofs"]):
+        full_q_dot[d] = q_dot[i + 6]
+    for i, d in enumerate(settings["base_dofs"]):
+        full_q_dot[d] = q_dot[i + 12]
+    jac = t.get_jacobian()
+    print("Final twists: ", jac @ q_dot)
