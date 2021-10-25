@@ -1,16 +1,18 @@
 import json
 import math
-from typing import List
+import time
+from typing import Dict, List
 import klampt
 import klampt.plan as kp
 from klampt.math import vectorops as vo
 import cvxpy as cp
 import numpy as np
+from numpy.core.numeric import full
 from consts import SETTINGS_PATH
 
 
 class Tracker:
-    def __init__(self, world_model, lock_arms: bool=True):
+    def __init__(self, world_model, lam: Dict[str, float], lock_arms: bool=True):
         """Create an optimization problem that generates joint motions to
         achieve a desired hand twist.
 
@@ -65,20 +67,37 @@ class Tracker:
         self.p_lower_lim_param = cp.Parameter(
             len(self.left_dofs) + len(self.right_dofs),
             name="p_lower_lim_param")
-        self.right_twist_con_param = cp.Parameter(
-            self.m, name="right_twist_con_param")
-        self.constraints = self.build_ls_constraints()
+        self.constraints = self.build_constraints(self.ls_q_dot_var)
         self.ls_prob = cp.Problem(self.ls_objective, self.constraints)
         ## Null space optimization
         self.max_nullity = min(self.num_total_dofs, self.m * self.num_arms)
-        self.null_param = cp.Parameter(
-            (self.num_total_dofs, self.max_nullity),name="nullspace")
-        self.q_dot_part_param = cp.Parameter(self.num_total_dofs,name="qdot_part")
-        self.resid_var = cp.Variable(self.max_nullity,name="residual")
+        self.null_basis_param = cp.Parameter(
+            (self.num_total_dofs, self.max_nullity), name="nullspace")
+        self.q_dot_part_param = cp.Parameter(self.num_total_dofs,
+            name="qdot_part")
+        self.resid_var = cp.Variable(self.max_nullity, name="residual")
+        self.q_dot_full = (self.q_dot_part_param
+            + self.null_basis_param @ self.resid_var)
+        self.resid_constraints = self.build_constraints(self.q_dot_full)
+        ### Null space objective weighting
+        self.arm_penalty = lam.get("arm_penalty", 0)
+        self.strafe_penalty = lam.get("strafe_penalty", 0)
+        self.base_penalty = lam.get("base_penalty", 0)
+        self.resid_obj = cp.Minimize(
+            # Arm dofs
+            self.arm_penalty * cp.norm2(self.q_dot_full[:self.num_arm_dofs])**2
+            # Strafe dof
+            + self.strafe_penalty * self.q_dot_full[self.num_arm_dofs + 1]**2
+            # Base dofs
+            + self.base_penalty * cp.norm2(self.q_dot_full[self.num_arm_dofs:])**2
+        )
+        self.resid_prob = cp.Problem(self.resid_obj, self.resid_constraints)
 
     def get_q_dot(self, cfg: List[float], target: np.ndarray):
-        val, res = self.get_ls_soln(cfg, target)
-        return val
+        q_dot_part, _ = self.get_ls_soln(cfg, target)
+        q_dot_h, _ = self.get_resid_soln(cfg, q_dot_part)
+        # print("Particular soln", q_dot_part)
+        return q_dot_part + q_dot_h
 
     def get_ls_soln(self, cfg: List[float], target: np.ndarray):
         self.fill_ls_params(cfg)
@@ -98,18 +117,36 @@ class Tracker:
         self.p_lower_lim_param.value = -np.sqrt(
             np.maximum(2 * self.a_lim * (j_cfg - self.full_q_lower_lim), 0)
         )
-        tf_l = self.robot_model.link(self.left_name).getTransform()
-        tf_r = self.robot_model.link(self.right_name).getTransform()
+        # print("Upper lim", np.sqrt(
+        #     np.maximum(2 * self.a_lim * (self.full_q_upper_lim - j_cfg), 0)
+        # ))
+        # print("Lower lim", -np.sqrt(
+        #     np.maximum(2 * self.a_lim * (j_cfg - self.full_q_lower_lim), 0)
+        # ))
 
-    def build_ls_constraints(self):
+    def get_resid_soln(self, cfg: List[float], part_soln: np.ndarray):
+        self.fill_resid_params(cfg, part_soln)
+        res = self.resid_prob.solve()
+        return self.null_basis_param.value @ self.resid_var.value, res
+
+    def fill_resid_params(self, cfg: List[float], part_soln: np.ndarray):
+        self.robot_model.setConfig(cfg)
+        jac = self.get_jacobian()
+        self.null_basis_param.value = np.zeros(
+            (self.num_total_dofs, self.max_nullity))
+        null_basis = self.get_null_basis(jac)
+        self.null_basis_param.value[:, :null_basis.shape[1]] = null_basis
+        self.q_dot_part_param.value = part_soln
+
+    def build_constraints(self, q_dot_var):
         con = []
         # Absolute velocity limits
-        con.append(cp.abs(self.ls_q_dot_var)
+        con.append(cp.abs(q_dot_var)
             <= np.concatenate((self.v_lim, self.v_lim, self.base_v_lim)))
         # Position limits
-        con.append(self.ls_q_dot_var[:self.num_arm_dofs]
+        con.append(q_dot_var[:self.num_arm_dofs]
             <= self.p_upper_lim_param)
-        con.append(self.ls_q_dot_var[:self.num_arm_dofs]
+        con.append(q_dot_var[:self.num_arm_dofs]
             >= self.p_lower_lim_param)
         return con
 
@@ -192,14 +229,19 @@ if __name__ == "__main__":
     with open(SETTINGS_PATH, "r") as f:
         settings = json.load(f)
     q = robot_model.getConfig()
-    cfg_l = [-4.635901893690355, 5.806223419961121, 1.082262209315542, -2.753160794116381, 1.0042225011740618, 4.022876408436895]
+    cfg_l = [0.17317459, -1.66203799, -2.25021315, 3.95050542, -0.59267456, -0.8280866]#[-4.635901893690355, 5.806223419961121, 1.082262209315542, -2.753160794116381, 1.0042225011740618, 4.022876408436895]
     for i, d in enumerate(settings["left_arm_dofs"]):
         q[d] = cfg_l[i]
     cfg_r = mirror_arm_config(cfg_l)
     for i, d in enumerate(settings["right_arm_dofs"]):
         q[d] = cfg_r[i]
     robot_model.setConfig(q)
-    t = Tracker(world, True)
+    weights = {
+        "arm_penalty": 2,
+        "strafe_penalty": 10,
+        "base_penalty": 1
+    }
+    t = Tracker(world, weights, True)
     q_dot = t.get_q_dot(q, np.zeros(12))
     print("Final q dot", q_dot)
     full_q_dot = np.zeros(len(q))
@@ -211,3 +253,14 @@ if __name__ == "__main__":
         full_q_dot[d] = q_dot[i + 12]
     jac = t.get_jacobian()
     print("Final twists: ", jac @ q_dot)
+    start_red_q = np.array(q)[settings["left_arm_dofs"] + settings["right_arm_dofs"] + settings["base_dofs"]]
+    red_q = np.copy(start_red_q)
+    start = time.time()
+    runs = 100
+    dt = 1 / 50
+    for i in range(runs):
+        q_dot = t.get_q_dot(q, np.zeros(12))
+        red_q += q_dot * dt
+    delta = time.time() - start
+    print(f"{runs} runs took {delta}s, for {delta/runs}s on average")
+    print(f"After {runs} steps, config moved from \n{start_red_q} \nto \n{red_q}, \nfor a delta of \n{red_q - start_red_q}")
