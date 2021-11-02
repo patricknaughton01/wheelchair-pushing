@@ -3,12 +3,9 @@ import math
 import time
 from typing import Dict, List
 import klampt
-import klampt.plan as kp
-from klampt.math import vectorops as vo
+from klampt.math import se3
 import cvxpy as cp
 import numpy as np
-from numpy.core.numeric import full
-from numpy.lib.financial import mirr
 from consts import SETTINGS_PATH
 
 
@@ -28,7 +25,6 @@ class Tracker:
         self.lock_arms = lock_arms
         self.world_model: klampt.WorldModel = world_model
         self.robot_model: klampt.RobotModel = self.world_model.robot(0)
-        self.cspace = kp.robotcspace.RobotCSpace(self.robot_model)
         self.left_dofs: List[int] = self.settings["left_arm_dofs"]
         self.right_dofs: List[int] = self.settings["right_arm_dofs"]
         self.base_dofs: List[int] = self.settings["base_dofs"]
@@ -55,6 +51,9 @@ class Tracker:
         self.left_attractor = np.array([0.17317459, -1.66203799, -2.25021315, 3.95050542, -0.59267456, -0.8280866])
         self.right_attractor = np.array(mirror_arm_config(self.left_attractor))
         self.arms_attractor = np.concatenate((self.left_attractor, self.right_attractor))
+        self.left_in_right = se3.mul(
+            se3.inv(self.robot_model.link("left_tool_link").getTransform()),
+            self.robot_model.link("right_tool_link").getTransform())
         ## Initial LS problem
         self.ls_target_twist_param = cp.Parameter(
             self.m * self.num_arms, name="v_target")
@@ -91,7 +90,6 @@ class Tracker:
         self.strafe_penalty = lam.get("strafe_penalty", 0)
         self.base_penalty = lam.get("base_penalty", 0)
         self.attractor_penalty = lam.get("attractor_penalty", 0)
-        print("In tracker: ", self.arm_penalty, self.strafe_penalty, self.base_penalty, self.attractor_penalty)
         self.resid_obj = cp.Minimize(
             # Arm dofs
             self.arm_penalty * cp.norm2(self.q_dot_full[:self.num_arm_dofs])**2
@@ -104,10 +102,29 @@ class Tracker:
         )
         self.resid_prob = cp.Problem(self.resid_obj, self.resid_constraints)
 
-    def get_q_dot(self, cfg: List[float], target: np.ndarray):
+    def get_target_config(self, cfg: List[float], target: np.ndarray) -> List[float]:
+        q_dot = self.get_q_dot(cfg, target)
+        delta_q = self.dt * q_dot
+        new_t_cfg = self.extract_cfg(cfg) + delta_q
+        new_cfg = cfg[:]
+        self.pack_cfg(new_cfg, new_t_cfg)
+        self.robot_model.setConfig(new_cfg)
+
+
+    def get_q_dot(self, cfg: List[float], target: np.ndarray) -> np.ndarray:
+        """Get joint velocities so that the robot's hands achieve the target
+        twists in `target` while satisfying secondary objectives as well.
+
+        Args:
+            cfg (List[float]): Current full Klampt config of robot.
+            target (np.ndarray): (12,) array left target twist followed by
+                right target twist.
+
+        Returns:
+            np.ndarray: (self.num_total_dofs,) q dot
+        """
         q_dot_part, _ = self.get_ls_soln(cfg, target)
         q_dot_h, _ = self.get_resid_soln(cfg, q_dot_part)
-        # print("Particular soln", q_dot_part)
         return q_dot_part + q_dot_h
 
     def get_ls_soln(self, cfg: List[float], target: np.ndarray):
@@ -129,12 +146,6 @@ class Tracker:
         self.p_lower_lim_param.value = -np.sqrt(
             np.maximum(2 * self.a_lim * (j_cfg - self.full_q_lower_lim), 0)
         )
-        # print("Upper lim", np.sqrt(
-        #     np.maximum(2 * self.a_lim * (self.full_q_upper_lim - j_cfg), 0)
-        # ))
-        # print("Lower lim", -np.sqrt(
-        #     np.maximum(2 * self.a_lim * (j_cfg - self.full_q_lower_lim), 0)
-        # ))
 
     def get_resid_soln(self, cfg: List[float], part_soln: np.ndarray):
         self.fill_resid_params(cfg, part_soln)
@@ -224,6 +235,28 @@ class Tracker:
 
     def get_arm_cfg(self, cfg: List[float]) -> np.ndarray:
         return np.array(cfg)[self.left_dofs + self.right_dofs]
+
+    def pack_cfg(self, cfg: List[float], n_cfg: np.ndarray) -> List[float]:
+        """Pack a new configuration for the DoFs the tracker can modify
+        (left arm, right arm, base).
+
+        Args:
+            cfg (List[float]): Klampt format config template.
+            n_cfg (np.ndarray): New values of tracker dofs.
+
+        Returns:
+            List[float]: Klampt format config.
+        """
+        for i, d in enumerate(self.left_dofs):
+            cfg[d] = n_cfg[i]
+        for i, d in enumerate(self.right_dofs):
+            cfg[d] = n_cfg[i + self.m]
+        for i, d in enumerate(self.base_dofs):
+            cfg[d] = n_cfg[i + self.num_arms * self.m]
+
+    def extract_cfg(self, cfg: List[float]) -> np.ndarray:
+        np_cfg = np.array(cfg)
+        return np_cfg[self.left_dofs + self.right_dofs + self.base_dofs]
 
 
 def mirror_arm_config(config):
