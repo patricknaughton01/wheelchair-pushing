@@ -8,11 +8,12 @@ from klampt.math import vectorops as vo
 import cvxpy as cp
 import numpy as np
 from numpy.core.numeric import full
+from numpy.lib.financial import mirr
 from consts import SETTINGS_PATH
 
 
 class Tracker:
-    def __init__(self, world_model, lam: Dict[str, float], lock_arms: bool=True):
+    def __init__(self, world_model, dt: float, lam: Dict[str, float], lock_arms: bool=True):
         """Create an optimization problem that generates joint motions to
         achieve a desired hand twist.
 
@@ -21,6 +22,7 @@ class Tracker:
         """
         with open(SETTINGS_PATH, "r") as f:
             self.settings = json.load(f)
+        self.dt = dt
         self.left_name = "left_tool_link"
         self.right_name = "right_tool_link"
         self.lock_arms = lock_arms
@@ -50,6 +52,9 @@ class Tracker:
         self.m = 6  # Dimensionality of a twist
         self.num_arms = 2
         self.num_klampt_dofs = len(self.robot_model.getConfig())
+        self.left_attractor = np.array([0.17317459, -1.66203799, -2.25021315, 3.95050542, -0.59267456, -0.8280866])
+        self.right_attractor = np.array(mirror_arm_config(self.left_attractor))
+        self.arms_attractor = np.concatenate((self.left_attractor, self.right_attractor))
         ## Initial LS problem
         self.ls_target_twist_param = cp.Parameter(
             self.m * self.num_arms, name="v_target")
@@ -73,6 +78,8 @@ class Tracker:
         self.max_nullity = min(self.num_total_dofs, self.m * self.num_arms)
         self.null_basis_param = cp.Parameter(
             (self.num_total_dofs, self.max_nullity), name="nullspace")
+        self.arms_config_param = cp.Parameter(self.num_arm_dofs,
+            name="arms_config")
         self.q_dot_part_param = cp.Parameter(self.num_total_dofs,
             name="qdot_part")
         self.resid_var = cp.Variable(self.max_nullity, name="residual")
@@ -83,6 +90,8 @@ class Tracker:
         self.arm_penalty = lam.get("arm_penalty", 0)
         self.strafe_penalty = lam.get("strafe_penalty", 0)
         self.base_penalty = lam.get("base_penalty", 0)
+        self.attractor_penalty = lam.get("attractor_penalty", 0)
+        print("In tracker: ", self.arm_penalty, self.strafe_penalty, self.base_penalty, self.attractor_penalty)
         self.resid_obj = cp.Minimize(
             # Arm dofs
             self.arm_penalty * cp.norm2(self.q_dot_full[:self.num_arm_dofs])**2
@@ -90,6 +99,8 @@ class Tracker:
             + self.strafe_penalty * self.q_dot_full[self.num_arm_dofs + 1]**2
             # Base dofs
             + self.base_penalty * cp.norm2(self.q_dot_full[self.num_arm_dofs:])**2
+            # Attractor configs
+            + self.attractor_penalty * cp.norm2(self.q_dot_full[:self.num_arm_dofs] * self.dt + self.arms_config_param - self.arms_attractor)**2
         )
         self.resid_prob = cp.Problem(self.resid_obj, self.resid_constraints)
 
@@ -101,6 +112,7 @@ class Tracker:
 
     def get_ls_soln(self, cfg: List[float], target: np.ndarray):
         self.fill_ls_params(cfg)
+        self.ls_q_dot_var.value = np.zeros(self.num_total_dofs)
         self.ls_target_twist_param.value = target
         res = self.ls_prob.solve()
         return self.ls_q_dot_var.value, res
@@ -126,6 +138,7 @@ class Tracker:
 
     def get_resid_soln(self, cfg: List[float], part_soln: np.ndarray):
         self.fill_resid_params(cfg, part_soln)
+        self.resid_var.value = np.zeros(self.max_nullity)
         res = self.resid_prob.solve()
         return self.null_basis_param.value @ self.resid_var.value, res
 
@@ -137,6 +150,9 @@ class Tracker:
         null_basis = self.get_null_basis(jac)
         self.null_basis_param.value[:, :null_basis.shape[1]] = null_basis
         self.q_dot_part_param.value = part_soln
+        np_cfg = np.array(cfg)
+        self.arms_config_param.value = np.concatenate((
+            np_cfg[self.left_dofs], np_cfg[self.right_dofs]))
 
     def build_constraints(self, q_dot_var):
         con = []
@@ -238,10 +254,12 @@ if __name__ == "__main__":
     robot_model.setConfig(q)
     weights = {
         "arm_penalty": 2,
-        "strafe_penalty": 10,
-        "base_penalty": 1
+        "strafe_penalty": 2,
+        "base_penalty": 1,
+        "attractor_penalty": 10000
     }
-    t = Tracker(world, weights, True)
+    dt = 1 / 50
+    t = Tracker(world, dt, weights, True)
     q_dot = t.get_q_dot(q, np.zeros(12))
     print("Final q dot", q_dot)
     full_q_dot = np.zeros(len(q))
@@ -257,10 +275,16 @@ if __name__ == "__main__":
     red_q = np.copy(start_red_q)
     start = time.time()
     runs = 100
-    dt = 1 / 50
     for i in range(runs):
         q_dot = t.get_q_dot(q, np.zeros(12))
         red_q += q_dot * dt
+        for i, d in enumerate(settings["left_arm_dofs"]):
+            q[d] = red_q[i]
+        for i, d in enumerate(settings["right_arm_dofs"]):
+            q[d] = red_q[i + 6]
+        for i, d in enumerate(settings["base_dofs"]):
+            q[d] = red_q[i + 12]
     delta = time.time() - start
     print(f"{runs} runs took {delta}s, for {delta/runs}s on average")
     print(f"After {runs} steps, config moved from \n{start_red_q} \nto \n{red_q}, \nfor a delta of \n{red_q - start_red_q}")
+    print(f"Delta has a infinity norm of {np.linalg.norm(red_q - start_red_q, np.inf)}")
