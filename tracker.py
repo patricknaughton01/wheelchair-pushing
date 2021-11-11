@@ -143,6 +143,7 @@ class Tracker:
         collides = False
         for _ in self.collider.collisions():
             collides = True
+            break
         if collides:
             # If collision detected, reset to old config and return that
             # collision occured
@@ -161,7 +162,6 @@ class Tracker:
 
         cfg = self.robot_model.getConfig()
         q_dot = self.get_q_dot(cfg, target)
-        print(q_dot[13])
         delta_q = self.dt * q_dot
         new_t_cfg = self.extract_cfg(cfg) + delta_q
         new_cfg = cfg[:]
@@ -189,6 +189,7 @@ class Tracker:
         collides = False
         for _ in self.collider.collisions():
             collides = True
+            break
         if self.robot_model.selfCollides() or collides:
             self.robot_model.setConfig(cfg)
             self.wheelchair_model.setConfig(orig_w_cfg)
@@ -272,10 +273,14 @@ class Tracker:
                 (in module convention).
         """
         # Jacobian (column) order is left arm, right arm, base
-        left_full_robot_jac = np.array(
-            self.robot_model.link(self.left_name).getJacobian([0,0,0]))
-        right_full_robot_jac = np.array(
-            self.robot_model.link(self.right_name).getJacobian([0,0,0]))
+        left_full_robot_jac = np.concatenate((
+            np.array(self.robot_model.link(self.left_name).getOrientationJacobian()),
+            np.array(self.robot_model.link(self.left_name).getPositionJacobian([0,0,0]))
+        ))
+        right_full_robot_jac = np.concatenate((
+            np.array(self.robot_model.link(self.right_name).getOrientationJacobian()),
+            np.array(self.robot_model.link(self.right_name).getPositionJacobian([0,0,0]))
+        ))
         left_jac = self.pack_jac(left_full_robot_jac)
         right_jac = self.pack_jac(right_full_robot_jac)
         return np.vstack([ left_jac, right_jac ])
@@ -499,19 +504,20 @@ def test_wheelchair_update():
     dt = 1 / 50
     weights = {
         "arm_penalty": 0,
-        "strafe_penalty": 0,
+        "strafe_penalty": 1,
         "base_penalty": 0,
-        "attractor_penalty": 1
+        "attractor_penalty": 10
     }
     t = Tracker(world, dt, lam=weights, lock_arms=True)
-    timesteps = 100
+    timesteps = 1000
     vis.show()
+    time.sleep(5)
     for _ in range(timesteps):
-        print(t.get_target_config(np.array([1.0, 0.5])))
+        print(t.get_target_config(np.array([1.0, 1.0])))
         time.sleep(dt)
-    for _ in range(timesteps):
-        print(t.get_target_config(np.array([1.0, -0.5])))
-        time.sleep(dt)
+    # for _ in range(timesteps):
+    #     print(t.get_target_config(np.array([1.0, -0.5])))
+    #     time.sleep(dt)
     while vis.shown():
         time.sleep(0.05)
 
