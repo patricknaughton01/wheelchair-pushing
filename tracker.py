@@ -1,7 +1,7 @@
 import json
 import math
 import time
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import klampt
 from klampt.math import se3, so3
 from klampt.model import ik, collide
@@ -145,9 +145,6 @@ class Tracker:
             collides = True
             break
         if collides:
-            # If collision detected, reset to old config and return that
-            # collision occured
-            self.wheelchair_model.setConfig(orig_w_cfg)
             return "collision"
         w_p_w_bl = so3.apply(w_t_wb[0], self.w_t_bl[1])
         w_p_w_br = so3.apply(w_t_wb[0], self.w_t_br[1])
@@ -183,18 +180,21 @@ class Tracker:
                 self.t_hee)
             goal = ik.objective(link, R=t_wee[0], t=t_wee[1])
             if not ik.solve_nearby(goal, 1, activeDofs=dofs):
-                self.robot_model.setConfig(cfg)
-                self.wheelchair_model.setConfig(orig_w_cfg)
                 return "ik"
         collides = False
         for _ in self.collider.collisions():
             collides = True
             break
         if self.robot_model.selfCollides() or collides:
-            self.robot_model.setConfig(cfg)
-            self.wheelchair_model.setConfig(orig_w_cfg)
             return "collision"
         return "success"
+
+    def get_configs(self) -> Tuple[List[float], List[float]]:
+        return self.robot_model.getConfig(), self.wheelchair_model.getConfig()
+
+    def set_configs(self, cfgs: Tuple[List[float], List[float]]):
+        self.robot_model.setConfig(cfgs[0])
+        self.wheelchair_model.setConfig(cfgs[1])
 
     def get_q_dot(self, cfg: List[float], target: np.ndarray) -> np.ndarray:
         """Get joint velocities so that the robot's hands achieve the target
@@ -511,9 +511,12 @@ def test_wheelchair_update():
     t = Tracker(world, dt, lam=weights, lock_arms=True)
     timesteps = 1000
     vis.show()
-    time.sleep(5)
     for _ in range(timesteps):
-        print(t.get_target_config(np.array([1.0, 1.0])))
+        cfgs = t.get_configs()
+        res = t.get_target_config(np.array([1.0, 0.0]))
+        if res != "success":
+            print(res)
+            t.set_configs(cfgs)
         time.sleep(dt)
     # for _ in range(timesteps):
     #     print(t.get_target_config(np.array([1.0, -0.5])))
