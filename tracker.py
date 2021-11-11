@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import klampt
 from klampt.math import se3, so3
-from klampt.model import ik
+from klampt.model import ik, collide
 import cvxpy as cp
 import numpy as np
 from consts import SETTINGS_PATH
@@ -43,6 +43,8 @@ class Tracker:
         self.t_hee = self._get_t_hee()
         self.left_dofs: List[int] = self.settings["left_arm_dofs"]
         self.right_dofs: List[int] = self.settings["right_arm_dofs"]
+        self.left_gripper_dofs: List[int] = self.settings["left_gripper_dofs"]
+        self.right_gripper_dofs: List[int] = self.settings["right_gripper_dofs"]
         self.base_dofs: List[int] = self.settings["base_dofs"]
         self.num_arm_dofs = len(self.left_dofs) + len(self.right_dofs)
         self.num_total_dofs = self.num_arm_dofs + len(self.base_dofs)
@@ -123,6 +125,8 @@ class Tracker:
             + self.attractor_penalty * cp.norm2(self.q_dot_full[:self.num_arm_dofs] * self.dt + self.arms_config_param - self.arms_attractor)**2
         )
         self.resid_prob = cp.Problem(self.resid_obj, self.resid_constraints)
+        self.collider = collide.WorldCollider(self.world_model)
+        self._ignore_collision_pairs()
 
     def get_target_config(self, vel: np.ndarray) -> List[float]:
         orig_w_cfg = self.wheelchair_model.getConfig()
@@ -135,29 +139,61 @@ class Tracker:
         w_q[self.wheelchair_dofs[0]] += delta_p[0]
         w_q[self.wheelchair_dofs[1]] += delta_p[1]
         w_q[self.wheelchair_dofs[2]] += delta_yaw
-        self.wheelchair_model.setConfig(orig_w_cfg)
-        return w_q, self.robot_model.getConfig()
-        # w_p_w_bl = so3.apply(w_t_wb[0], self.w_t_bl[1])
-        # w_p_w_br = so3.apply(w_t_wb[0], self.w_t_br[1])
-        # omega = np.array([0, 0, vel[1]])
-        # vel_l = (np.array([np.cos(yaw) * vel[0], np.sin(yaw) * vel[0], 0])
-        #     + np.cross(omega, w_p_w_bl))
-        # vel_r = (np.array([np.cos(yaw) * vel[0], np.sin(yaw) * vel[0], 0])
-        #     + np.cross(omega, w_p_w_br))
-        # target = np.concatenate((
-        #     omega, vel_l, omega, vel_r
-        # ))
+        self.wheelchair_model.setConfig(w_q)
+        collides = False
+        for _ in self.collider.collisions():
+            collides = True
+        if collides:
+            # If collision detected, reset to old config and return that
+            # collision occured
+            self.wheelchair_model.setConfig(orig_w_cfg)
+            return "collision"
+        w_p_w_bl = so3.apply(w_t_wb[0], self.w_t_bl[1])
+        w_p_w_br = so3.apply(w_t_wb[0], self.w_t_br[1])
+        omega = np.array([0, 0, vel[1]])
+        vel_l = (np.array([np.cos(yaw) * vel[0], np.sin(yaw) * vel[0], 0])
+            + np.cross(omega, w_p_w_bl))
+        vel_r = (np.array([np.cos(yaw) * vel[0], np.sin(yaw) * vel[0], 0])
+            + np.cross(omega, w_p_w_br))
+        target = np.concatenate((
+            omega, vel_l, omega, vel_r
+        ))
 
-        # cfg = self.robot_model.getConfig()
-        # q_dot = self.get_q_dot(cfg, target)
-        # delta_q = self.dt * q_dot
-        # new_t_cfg = self.extract_cfg(cfg) + delta_q
-        # new_cfg = cfg[:]
-        # self.pack_cfg(new_cfg, new_t_cfg)
-        # self.robot_model.setConfig(new_cfg)
-        # t_wb = self.robot_model.link(self.base_name).getTransform()
-        # t_wl = self.robot_model.link(self.left_name).getTransform()
-
+        cfg = self.robot_model.getConfig()
+        q_dot = self.get_q_dot(cfg, target)
+        print(q_dot[13])
+        delta_q = self.dt * q_dot
+        new_t_cfg = self.extract_cfg(cfg) + delta_q
+        new_cfg = cfg[:]
+        self.pack_cfg(new_cfg, new_t_cfg)
+        self.robot_model.setConfig(new_cfg)
+        for i in range(2):
+            if i == 0:
+                handle_name = self.left_handle_name
+                link = self.robot_model.link(self.left_name)
+                dofs = self.left_dofs
+            elif i == 1:
+                handle_name = self.right_handle_name
+                link = self.robot_model.link(self.right_name)
+                dofs = self.right_dofs
+            else:
+                break
+            t_wee = se3.mul(
+                self.wheelchair_model.link(handle_name).getTransform(),
+                self.t_hee)
+            goal = ik.objective(link, R=t_wee[0], t=t_wee[1])
+            if not ik.solve_nearby(goal, 1, activeDofs=dofs):
+                self.robot_model.setConfig(cfg)
+                self.wheelchair_model.setConfig(orig_w_cfg)
+                return "ik"
+        collides = False
+        for _ in self.collider.collisions():
+            collides = True
+        if self.robot_model.selfCollides() or collides:
+            self.robot_model.setConfig(cfg)
+            self.wheelchair_model.setConfig(orig_w_cfg)
+            return "collision"
+        return "success"
 
     def get_q_dot(self, cfg: List[float], target: np.ndarray) -> np.ndarray:
         """Get joint velocities so that the robot's hands achieve the target
@@ -359,6 +395,29 @@ class Tracker:
         r_hee = so3.from_axis_angle(aa)
         return (r_hee, (-0.05, 0, 0.15))
 
+    def _ignore_collision_pairs(self):
+        # Ignore collisions between hands and handles
+        gripper_dofs = self.left_gripper_dofs + self.right_gripper_dofs
+        for name in [self.left_handle_name, self.right_handle_name]:
+            for d in gripper_dofs:
+                self.collider.ignoreCollision((
+                    self.wheelchair_model.link(name), self.robot_model.link(d)
+                ))
+        for i in range(self.robot_model.numLinks()):
+            for j in range(self.robot_model.numLinks()):
+                if i != j:
+                    link_a = self.robot_model.link(i)
+                    link_b = self.robot_model.link(j)
+                    if (not link_a.geometry().empty()) and (not link_b.geometry().empty()):
+                        self.collider.ignoreCollision((link_a, link_b))
+        for i in range(self.wheelchair_model.numLinks()):
+            for j in range(self.wheelchair_model.numLinks()):
+                if i != j:
+                    link_a = self.wheelchair_model.link(i)
+                    link_b = self.wheelchair_model.link(j)
+                    if (not link_a.geometry().empty()) and (not link_b.geometry().empty()):
+                        self.collider.ignoreCollision((link_a, link_b))
+
 
 def mirror_arm_config(config):
     """Mirrors an arm configuration from left to right or vice versa. """
@@ -438,12 +497,20 @@ def test_wheelchair_update():
         settings = json.load(f)
     vis.add("world", world)
     dt = 1 / 50
-    t = Tracker(world, dt, lam={}, lock_arms=True)
-    timesteps = 200
+    weights = {
+        "arm_penalty": 0,
+        "strafe_penalty": 0,
+        "base_penalty": 0,
+        "attractor_penalty": 1
+    }
+    t = Tracker(world, dt, lam=weights, lock_arms=True)
+    timesteps = 100
     vis.show()
     for _ in range(timesteps):
-        w_q, _ = t.get_target_config(np.array([0.0, 0.0]))
-        t.wheelchair_model.setConfig(w_q)
+        print(t.get_target_config(np.array([1.0, 0.5])))
+        time.sleep(dt)
+    for _ in range(timesteps):
+        print(t.get_target_config(np.array([1.0, -0.5])))
         time.sleep(dt)
     while vis.shown():
         time.sleep(0.05)
