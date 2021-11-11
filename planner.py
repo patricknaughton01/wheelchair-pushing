@@ -1,17 +1,24 @@
+from typing import List, Tuple
+import klampt
 import numpy as np
-from tracker import Tracker
 
 class Planner:
-    def __init__(self, tracker: Tracker, vel_set: np.ndarray=None):
-        self.tracker = tracker
-        if vel_set is None:
-            vel_set = np.array([
-                [0.0, 1.0],
-                [1.0, 1.0],
-                [1.0, 0.5],
-                [1.0, 0.0],
-                [1.0, -0.5],
-                [1.0, -1.0],
-                [0.0, -1.0]
-            ])
-        self.vel_set = vel_set
+    def __init__(self, world_model: klampt.WorldModel, dt: float):
+        self.world_model = world_model
+        self.dt = dt
+
+    def plan(self, target: np.ndarray):
+        """Perform any initial planning
+
+        Args:
+            target (np.ndarray): (3,) x,y,theta target in world frame
+        """
+        pass
+
+    def next(self) -> Tuple[List[float], List[float]]:
+        """Get the next configuration of TRINA and the wheelchair in the plan.
+
+        Returns:
+            Tuple[List[float], List[float]]: TRINA config, wheelchair config
+        """
+        raise NotImplementedError

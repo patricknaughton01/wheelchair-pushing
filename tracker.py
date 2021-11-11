@@ -509,7 +509,7 @@ def test_wheelchair_update():
         "attractor_penalty": 10
     }
     t = Tracker(world, dt, lam=weights, lock_arms=True)
-    timesteps = 1000
+    timesteps = 10
     vis.show()
     for _ in range(timesteps):
         cfgs = t.get_configs()
