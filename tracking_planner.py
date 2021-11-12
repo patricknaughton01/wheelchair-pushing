@@ -10,7 +10,7 @@ class TrackingPlannerInstance(Planner):
         super().__init__(world_model, dt)
 
     def next(self) -> Tuple[List[float], List[float]]:
-        pass
+        self._check_target()
 
 
 class TrackerPlanner:
