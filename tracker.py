@@ -141,7 +141,6 @@ class Tracker:
         w_q[self.wheelchair_dofs[1]] += delta_p[1]
         w_q[self.wheelchair_dofs[2]] += delta_yaw
         self.wheelchair_model.setConfig(w_q)
-        print("WC CONFIG: " ,w_q)
         collides = False
         for _ in self.collider.collisions():
             collides = True
@@ -217,7 +216,6 @@ class Tracker:
 
     def get_ls_soln(self, cfg: List[float], target: np.ndarray):
         self.fill_ls_params(cfg)
-        self.ls_q_dot_var.value = np.zeros(self.num_total_dofs)
         self.ls_target_twist_param.value = target
         res = self.ls_prob.solve()
         return self.ls_q_dot_var.value, res
@@ -237,7 +235,6 @@ class Tracker:
 
     def get_resid_soln(self, cfg: List[float], part_soln: np.ndarray):
         self.fill_resid_params(cfg, part_soln)
-        self.resid_var.value = np.zeros(self.max_nullity)
         res = self.resid_prob.solve()
         return self.null_basis_param.value @ self.resid_var.value, res
 
@@ -523,8 +520,6 @@ def test_wheelchair_update():
     # for _ in range(timesteps):
     #     print(t.get_target_config(np.array([1.0, -0.5])))
     #     time.sleep(dt)
-    while vis.shown():
-        time.sleep(0.05)
 
 
 if __name__ == "__main__":
