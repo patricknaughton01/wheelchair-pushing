@@ -11,7 +11,7 @@ from consts import SETTINGS_PATH
 
 
 class Tracker:
-    def __init__(self, world_model, dt: float, lam: Dict[str, float], lock_arms: bool=True):
+    def __init__(self, world_model, dt: float, lam: Dict[str, float]=None):
         """Create an optimization problem that generates joint motions to
         achieve a desired hand twist.
 
@@ -27,7 +27,6 @@ class Tracker:
         self.left_handle_name = "lefthandle_link"
         self.right_handle_name = "righthandle_link"
         self.w_base_name = "base_link"
-        self.lock_arms = lock_arms
         self.world_model: klampt.WorldModel = world_model
         self.robot_model: klampt.RobotModel = self.world_model.robot("trina")
         self.wheelchair_model: klampt.RobotModel = self.world_model.robot(
@@ -110,6 +109,8 @@ class Tracker:
             + self.null_basis_param @ self.resid_var)
         self.resid_constraints = self.build_constraints(self.q_dot_full)
         ### Null space objective weighting
+        if lam is None:
+            lam = {}
         self.arm_penalty = lam.get("arm_penalty", 0)
         self.strafe_penalty = lam.get("strafe_penalty", 0)
         self.base_penalty = lam.get("base_penalty", 0)
@@ -140,6 +141,7 @@ class Tracker:
         w_q[self.wheelchair_dofs[1]] += delta_p[1]
         w_q[self.wheelchair_dofs[2]] += delta_yaw
         self.wheelchair_model.setConfig(w_q)
+        print("WC CONFIG: " ,w_q)
         collides = False
         for _ in self.collider.collisions():
             collides = True
@@ -508,8 +510,8 @@ def test_wheelchair_update():
         "base_penalty": 0,
         "attractor_penalty": 10
     }
-    t = Tracker(world, dt, lam=weights, lock_arms=True)
-    timesteps = 10
+    t = Tracker(world, dt, lam=weights)
+    timesteps = 1000
     vis.show()
     for _ in range(timesteps):
         cfgs = t.get_configs()

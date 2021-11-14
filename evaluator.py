@@ -14,4 +14,7 @@ class Evaluator:
         self.p.plan()
         stats["planning_time"] = time.time() - start
         while True:
-            self.p.next()
+            try:
+                self.p.next()
+            except StopIteration:
+                break
