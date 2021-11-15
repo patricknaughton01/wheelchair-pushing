@@ -23,9 +23,9 @@ class TrackingPlannerInstance(Planner):
             "base_penalty": 0,
             "attractor_penalty": 10
         }
-        self.rollout = 10
-        self.robot_model = self.world_model.robot("trina")
-        self.wheelchair_model = self.world_model.robot("wheelchair")
+        self.rollout = 50
+        self.robot_model: klampt.RobotModel = self.world_model.robot("trina")
+        self.wheelchair_model: klampt.RobotModel = self.world_model.robot("wheelchair")
         self.wheelchair_dofs = self.settings["wheelchair_dofs"]
         self.tracker = Tracker(self.world_model, self.dt, self.tracker_weights)
         self.executor = None
@@ -74,7 +74,7 @@ class TrackerExecutor:
         self.rollout = rollout
         if vel_set is None:
             vel_set_list = []
-            for fv in [0.0, 0.5, 1.0]:
+            for fv in [0.1, 0.5, 1.0]:
                 for rv in [0.0, 0.1, 0.5, 1.0]:
                     if not (fv < 1e-3 and rv < 1e-3):
                         vel_set_list.append([fv, rv])
@@ -83,18 +83,35 @@ class TrackerExecutor:
         self.vel_set = vel_set
         self.res = res
         self.wheelchair_dofs = self.settings["wheelchair_dofs"]
-        self.target_xy = np.array([
-            self.target_cfg[self.wheelchair_dofs[0]],
-            self.target_cfg[self.wheelchair_dofs[1]]
-        ])
+        self.target_np = self._wheelchair_cfg_to_np(self.target_cfg)
         self.grid_planner = GridPlanner(self.tracker.world_model.copy(),
             self.target_cfg, self.res)
+        # (len(self.vel_set), 3), each row i has the resulting r, theta, dtheta
+        # encoding the change in position resulting from applying
+        # self.vel_set[i, :] for self.rollout iterations to the wheelchair.
+        # Stored in polar form so that they can easily be applied regardless
+        # of where the wheelchair is facing (easy to add the angles).
+        self.vel_rollout_deltas: np.ndarray = None
 
     def get_next_configs(self) -> Tuple[List[float], List[float]]:
-        best_score = None   # Low score is better
-        best_cfgs = None
-        for i in range(len(self.vel_set)):
-            targ_vel = self.vel_set[i, :]
+        if self.vel_rollout_deltas is None:
+            self._init_vel_rollout_deltas()
+        # Precompute the scores achieved assuming each primitive is feasible
+        scores = np.empty(len(self.vel_rollout_deltas))
+        curr_np = self._wheelchair_cfg_to_np(self.tracker.get_configs()[1])
+        for i in range(len(self.vel_rollout_deltas)):
+            vrd = self.vel_rollout_deltas[i, :]
+            end_np = np.array([
+                curr_np[0] + vrd[0] * np.cos(vrd[1] + curr_np[2]),
+                curr_np[1] + vrd[0] * np.sin(vrd[1] + curr_np[2]),
+                curr_np[2] + vrd[2]
+            ])
+            scores[i] = self.score_config_np(end_np)
+        # sorts in increasing order
+        score_sorted_inds = np.argsort(scores)
+        # Eval in sorted order, pick first feasible
+        for ind in score_sorted_inds:
+            targ_vel = self.vel_set[ind, :]
             cfgs = self.tracker.get_configs()
             successful_rollout = True
             for _ in range(self.rollout):
@@ -103,32 +120,42 @@ class TrackerExecutor:
                     successful_rollout = False
                     break
             if successful_rollout:
-                score = self.score_config()
-                if best_score is None or score < best_score:
-                    best_score = score
-                    best_cfgs = self.tracker.get_configs()
+                return self.tracker.get_configs()
             self.tracker.set_configs(cfgs)
-        if best_score is not None:
-            print(best_score, best_cfgs[1][0], best_cfgs[1][1])
-            return best_cfgs
         return None, None
 
-    def score_config(self) -> float:
-        cfg = self.tracker.wheelchair_model.getConfig()
-        wheelchair_xy = np.array([
-            cfg[self.wheelchair_dofs[0]],
-            cfg[self.wheelchair_dofs[1]]
-        ])
-        wheelchair_yaw = cfg[self.wheelchair_dofs[2]]
-        goal_dist_score = self.grid_planner.get_dist(wheelchair_xy)
-        # vec_to_goal = self.target_xy - wheelchair_xy
-        # angle_to_goal = so2.diff(np.arctan2(vec_to_goal[1], vec_to_goal[0]),
-        #     wheelchair_yaw)
+    def score_config_np(self, wheelchair_np: np.ndarray) -> float:
+        goal_dist_score = self.grid_planner.get_dist(wheelchair_np[:2])
         align_with_goal_score = 0
         if goal_dist_score < self.disp_tol:
-            align_with_goal_score = abs(so2.diff(wheelchair_yaw,
-                self.target_cfg[self.wheelchair_dofs[2]]))
+            align_with_goal_score = abs(so2.diff(wheelchair_np[2],
+                self.target_np[2]))
         return goal_dist_score + align_with_goal_score
+
+    def _init_vel_rollout_deltas(self):
+        self.vel_rollout_deltas = np.empty((len(self.vel_set), 3))
+        for i in range(len(self.vel_set)):
+            curr_pos = np.zeros(3)
+            targ_vel = self.vel_set[i, :]
+            # Forward Euler
+            for _ in range(self.rollout):
+                w_delta = np.array([
+                    targ_vel[0] * np.cos(curr_pos[2]),
+                    targ_vel[0] * np.sin(curr_pos[2]),
+                    targ_vel[1]
+                ]) * self.tracker.dt
+                curr_pos += w_delta
+            self.vel_rollout_deltas[i, :] = np.array([
+                np.linalg.norm(curr_pos[:2]),
+                np.arctan2(curr_pos[1], curr_pos[0]),
+                curr_pos[2]
+            ])
+
+    def _wheelchair_cfg_to_np(self, cfg: List[float]) -> np.ndarray:
+        arr = []
+        for d in self.wheelchair_dofs:
+            arr.append(cfg[d])
+        return np.array(arr)
 
 
 class GridPlanner:
@@ -137,14 +164,17 @@ class GridPlanner:
     ):
         with open(SETTINGS_PATH, "r") as f:
             self.settings = json.load(f)
-        self.world_model = world_model
-        self.robot_model = self.world_model.robot("wheelchair")
+        # self.world_model = world_model
+        self.world_model = klampt.WorldModel()
+        self.world_model.loadFile("Model/worlds/TRINA_world_cholera.xml")
+        self.robot_model: klampt.RobotModel = self.world_model.robot("wheelchair")
         self.base_name = "base_link"
         self.wheelchair_dofs = self.settings["wheelchair_dofs"]
         self.target_cfg = target_cfg
         self.res = res
         self.collider = collide.WorldCollider(self.world_model)
         self._ignore_collision_pairs()
+        self._set_collision_margins()
         self.robot_model.setConfig(self.target_cfg)
         self.target_pos = np.array([
             self.target_cfg[self.wheelchair_dofs[0]],
@@ -196,14 +226,11 @@ class GridPlanner:
         # 1 3
         if not self._found_corners(corner_inds):
             raise RuntimeError("Not all corners have known distances")
-        # print(corner_inds)
         dists = []
         poses = []
         for c in corner_inds:
             dists.append(self.cache[c])
             poses.append(self._ind_to_pos(c))
-        # print(dists)
-        # print(poses)
         frac_x = (pos[0] - poses[0][0]) / (poses[2][0] - poses[0][0])
         frac_y = (pos[1] - poses[0][1]) / (poses[1][1] - poses[0][1])
         t1 = dists[0] * (1 - frac_x) + dists[2] * frac_x
@@ -222,14 +249,14 @@ class GridPlanner:
     def _collides(self, ind: Tuple[int, int]) -> bool:
         self.robot_model.setConfig(self._ind_to_cfg(ind))
         collides = False
-        for _ in self.collider.collisions():
+        for c in self.collider.collisions():
+            print(c[0].getName(), c[1].getName())
             collides = True
             break
         return collides
 
     def _heuristic(self, ind: Tuple[int, int], pos: np.ndarray) -> float:
         return 0
-        return np.linalg.norm(np.array(ind) * self.res - pos)
 
     def _pos_to_ind(self, pos: np.ndarray) -> Tuple[int, int]:
         return (int(pos[0] // self.res), int(pos[1] // self.res))
@@ -255,14 +282,14 @@ class GridPlanner:
                         self.collider.ignoreCollision((link_a, link_b))
         # For this planner, ignore collisions between the wheelchair and
         # trina, just want to check against obstacles
-        trina_model = self.world_model.robot("trina")
+        trina_model: klampt.RobotModel = self.world_model.robot("trina")
         for i in range(self.robot_model.numLinks()):
             for j in range(trina_model.numLinks()):
                 link_a = self.robot_model.link(i)
                 link_b = trina_model.link(j)
                 if (not link_a.geometry().empty()) and (not link_b.geometry().empty()):
                     self.collider.ignoreCollision((link_a, link_b))
-        # Ignore TRINA collisions
+        # Ignore TRINA self collisions
         for i in range(trina_model.numLinks()):
             for j in range(trina_model.numLinks()):
                 if i != j:
@@ -270,6 +297,14 @@ class GridPlanner:
                     link_b = trina_model.link(j)
                     if (not link_a.geometry().empty()) and (not link_b.geometry().empty()):
                         self.collider.ignoreCollision((link_a, link_b))
+        # Ignore any collision with the floor
+        self.collider.ignoreCollision(self.world_model.terrain("floor"))
+
+    def _set_collision_margins(self):
+        for i in range(self.robot_model.numLinks()):
+            link = self.robot_model.link(i)
+            if not link.geometry().empty():
+                link.geometry().setCollisionMargin(0.5)
 
 
 if __name__ == "__main__":
@@ -281,18 +316,16 @@ if __name__ == "__main__":
     wheelchair_model = world.robot("wheelchair")
     vis.add("world", world)
     vis.show()
-    dt = 1 / 20
+    dt = 1 / 50
     planner = TrackingPlannerInstance(world.copy(), dt)
     planner.plan(np.array([10.0, 0.0, 0.0]), 0.5, 0.5)
     iter = 0
-    while True:
+    while vis.shown():
         iter += 1
         try:
             planner.next()
             robot_model.setConfig(planner.robot_model.getConfig())
             wheelchair_model.setConfig(planner.wheelchair_model.getConfig())
-            print()
-            # time.sleep(dt)
         except StopIteration:
             print("Stopped at iteration ", iter)
             break
