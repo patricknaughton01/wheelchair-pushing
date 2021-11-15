@@ -4,8 +4,10 @@ import numpy as np
 
 
 class Planner:
-    def __init__(self, world_model: klampt.WorldModel, dt: float):
-        self.world_model = world_model
+    def __init__(self, world_fn: str, dt: float):
+        self.world_fn = world_fn
+        self.world_model = klampt.WorldModel()
+        self.world_model.loadFile(self.world_fn)
         self.dt = dt
         self.target: np.ndarray = None
         self.disp_tol: float = None
