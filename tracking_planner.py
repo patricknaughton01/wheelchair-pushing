@@ -23,12 +23,14 @@ class TrackingPlannerInstance(Planner):
             "attractor_penalty": 10
         }
         self.gp_res = 1.0
-        self.rollout = 10
+        self.rollout = 20
         self.robot_model: klampt.RobotModel = self.world_model.robot("trina")
         self.wheelchair_model: klampt.RobotModel = self.world_model.robot("wheelchair")
         self.wheelchair_dofs = self.settings["wheelchair_dofs"]
         self.tracker = Tracker(self.world_model, self.dt, self.tracker_weights)
         self.executor = None
+        self.cfgs_buffer: List[Tuple[List[float], List[float]]] = []
+        self.cfg_ind = 0
 
     def plan(self, target: np.ndarray, disp_tol: float, rot_tol: float):
         super().plan(target, disp_tol, rot_tol)
@@ -38,7 +40,9 @@ class TrackingPlannerInstance(Planner):
         gp = GridPlanner(self.world_fn, cfg, self.gp_res)
         self.executor = TrackerExecutor(self.tracker, cfg, gp, self.disp_tol,
             self.rot_tol, rollout=self.rollout)
-        # TODO: Add in call to TrackerExecutor for init config
+        # warm start the grid planner
+        gp.get_dist(self.executor._wheelchair_cfg_to_np(
+            self.wheelchair_model.getConfig()))
 
     def next(self):
         self._check_target()
@@ -53,12 +57,15 @@ class TrackingPlannerInstance(Planner):
             if so2.diff(wheelchair_yaw, self.target[2]) <= self.rot_tol:
                 print("REACHED GOAL")
                 raise StopIteration
-        n_cfgs = self.executor.get_next_configs()
-        if None in n_cfgs:
+        if self.cfg_ind >= len(self.cfgs_buffer):
+            self.cfgs_buffer = self.executor.get_next_configs()
+            self.cfg_ind = 0
+        if self.cfg_ind is None:
             print("NO VALID MOTIONS")
             raise StopIteration
-        self.robot_model.setConfig(n_cfgs[0])
-        self.wheelchair_model.setConfig(n_cfgs[1])
+        self.robot_model.setConfig(self.cfgs_buffer[self.cfg_ind][0])
+        self.wheelchair_model.setConfig(self.cfgs_buffer[self.cfg_ind][1])
+        self.cfg_ind += 1
 
 
 class TrackerExecutor:
@@ -92,7 +99,7 @@ class TrackerExecutor:
         # of where the wheelchair is facing (easy to add the angles).
         self.vel_rollout_deltas: np.ndarray = None
 
-    def get_next_configs(self) -> Tuple[List[float], List[float]]:
+    def get_next_configs(self) -> List[Tuple[List[float], List[float]]]:
         if self.vel_rollout_deltas is None:
             self._init_vel_rollout_deltas()
         # Precompute the scores achieved assuming each primitive is feasible
@@ -113,15 +120,17 @@ class TrackerExecutor:
             targ_vel = self.vel_set[ind, :]
             cfgs = self.tracker.get_configs()
             successful_rollout = True
+            cfg_traj: List[Tuple[List[float], List[float]]] = []
             for _ in range(self.rollout):
                 res = self.tracker.get_target_config(targ_vel)
                 if res != "success":
                     successful_rollout = False
                     break
+                cfg_traj.append(self.tracker.get_configs())
             if successful_rollout:
-                return self.tracker.get_configs()
+                return cfg_traj
             self.tracker.set_configs(cfgs)
-        return None, None
+        return None
 
     def score_config_np(self, wheelchair_np: np.ndarray) -> float:
         goal_dist_score = self.grid_planner.get_dist(wheelchair_np[:2])
@@ -176,6 +185,7 @@ if __name__ == "__main__":
             planner.next()
             robot_model.setConfig(planner.robot_model.getConfig())
             wheelchair_model.setConfig(planner.wheelchair_model.getConfig())
+            time.sleep(dt)
         except StopIteration:
             print("Stopped at iteration ", iter)
             break

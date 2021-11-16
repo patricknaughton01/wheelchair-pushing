@@ -153,4 +153,4 @@ class GridPlanner:
         for i in range(self.robot_model.numLinks()):
             link = self.robot_model.link(i)
             if not link.geometry().empty():
-                link.geometry().setCollisionMargin(0.5)
+                link.geometry().setCollisionMargin(0.75)
