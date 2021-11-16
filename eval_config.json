@@ -1,0 +1,19 @@
+{
+    "dt": 0.02,
+    "plan_timeout": 10.0,
+    "exec_timeout": 100.0,
+    "disp_tol": 0.5,
+    "rot_tol": 0.5,
+    "planners": ["tracking"],
+    "tests":[
+        {
+            "world_fn": "Model/worlds/TRINA_world_cholera.xml",
+            "goals": [
+                [10, 0, 0],
+                [10, 0, 90],
+                [10, 0, 180],
+                [10, 0, 270]
+            ]
+        }
+    ]
+}

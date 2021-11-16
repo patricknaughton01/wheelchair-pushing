@@ -55,17 +55,17 @@ class TrackingPlannerInstance(Planner):
         wheelchair_yaw = wheelchair_cfg[self.wheelchair_dofs[2]]
         if np.linalg.norm(wheelchair_xy - self.target[:2]) <= self.disp_tol:
             if so2.diff(wheelchair_yaw, self.target[2]) <= self.rot_tol:
-                print("REACHED GOAL")
                 raise StopIteration
         if self.cfg_ind >= len(self.cfgs_buffer):
             self.cfgs_buffer = self.executor.get_next_configs()
             self.cfg_ind = 0
         if self.cfg_ind is None:
-            print("NO VALID MOTIONS")
             raise StopIteration
         self.robot_model.setConfig(self.cfgs_buffer[self.cfg_ind][0])
         self.wheelchair_model.setConfig(self.cfgs_buffer[self.cfg_ind][1])
+        ret_ind = self.cfg_ind
         self.cfg_ind += 1
+        return self.cfgs_buffer[ret_ind]
 
 
 class TrackerExecutor:
