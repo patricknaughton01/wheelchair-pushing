@@ -1,8 +1,7 @@
 import json
-from typing import Dict, List, Set, Tuple
+from typing import List, Tuple
 
-from klampt.model import collide
-from klampt.math import so2, vectorops as vo
+from klampt.math import so2
 from consts import SETTINGS_PATH
 from planner import Planner
 import numpy as np
@@ -22,7 +21,7 @@ class TrackingPlannerInstance(Planner):
             "base_penalty": 0,
             "attractor_penalty": 10
         }
-        self.gp_res = 1.0
+        self.gp_res = 0.5
         self.rollout = 20
         self.robot_model: klampt.RobotModel = self.world_model.robot("trina")
         self.wheelchair_model: klampt.RobotModel = self.world_model.robot("wheelchair")
@@ -54,7 +53,7 @@ class TrackingPlannerInstance(Planner):
         ])
         wheelchair_yaw = wheelchair_cfg[self.wheelchair_dofs[2]]
         if np.linalg.norm(wheelchair_xy - self.target[:2]) <= self.disp_tol:
-            if so2.diff(wheelchair_yaw, self.target[2]) <= self.rot_tol:
+            if abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol:
                 raise StopIteration
         if self.cfg_ind >= len(self.cfgs_buffer):
             self.cfgs_buffer = self.executor.get_next_configs()
@@ -169,16 +168,17 @@ class TrackerExecutor:
 if __name__ == "__main__":
     import time
     from klampt import vis
+    world_fn = "Model/worlds/world_short_turn.xml"
     world = klampt.WorldModel()
-    world.loadFile("Model/worlds/TRINA_world_cholera.xml")
+    world.loadFile(world_fn)
     robot_model = world.robot("trina")
     wheelchair_model = world.robot("wheelchair")
+    dt = 1 / 50
+    planner = TrackingPlannerInstance(world_fn, dt)
+    planner.plan(np.array([0.0, -10.0, 0.0]), 0.5, 0.5)
+    iter = 0
     vis.add("world", world)
     vis.show()
-    dt = 1 / 50
-    planner = TrackingPlannerInstance("Model/worlds/TRINA_world_cholera.xml", dt)
-    planner.plan(np.array([10.0, 0.0, 0.0]), 0.5, 0.5)
-    iter = 0
     while vis.shown():
         iter += 1
         try:

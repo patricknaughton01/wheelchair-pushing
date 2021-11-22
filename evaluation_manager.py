@@ -11,8 +11,9 @@ from tracking_planner import TrackingPlannerInstance
 
 
 class EvaluationManager:
-    def __init__(self, p_name: str, world_fn: str, goal: np.ndarray):
-        with open("eval_config.json", "r") as f:
+    def __init__(self, p_name: str, world_fn: str, goal: np.ndarray, cfg_fn: str):
+        self.cfg_fn = cfg_fn
+        with open(self.cfg_fn, "r") as f:
             self.eval_settings = json.load(f)
         self.p_name = p_name
         self.world_fn = world_fn
@@ -65,8 +66,7 @@ class EvaluationManager:
         if self.eval_proc.is_alive():
             self.eval_proc.terminate()
         self.eval_proc.join()
-
-        if ret.get("execution_time", float('inf')) > self.eval_settings["exec_timeout"]:
+        if "error" not in ret and (ret.get("execution_time", float('inf')) > self.eval_settings["exec_timeout"]):
             ret = {"error": "executing_failed"}
         return ret
 
@@ -92,10 +92,12 @@ class EvaluationManager:
 def main():
     parser = argparse.ArgumentParser(description="Run evaluations of the "
         + "planners")
+    parser.add_argument("-c", type=str, default="eval_config.json",
+        help="eval config file name")
     parser.add_argument("-o", type=str, default="res.json",
         help="output file name")
     args = vars(parser.parse_args())
-    with open("eval_config.json", "r") as f:
+    with open(args["c"], "r") as f:
         eval_settings = json.load(f)
     res = {}
     total_settings = []
@@ -110,7 +112,7 @@ def main():
         p_name, world_fn, g = setting
         goal = np.array(g, dtype="float64")
         goal[2] = np.radians(goal[2])
-        m = EvaluationManager(p_name, world_fn, goal)
+        m = EvaluationManager(p_name, world_fn, goal, args["c"])
         # Eventually dump to JSON, all keys need to be strs
         res[p_name][world_fn][str(g)] = m.run_eval()
     with open(args["o"], "w") as f:

@@ -1,13 +1,19 @@
 {
-    "_comment": "Rotations here are in degrees for readability, code always expects radians",
+    "_comment": "Rotations here are in degrees here for readability, code always expects radians",
     "dt": 0.02,
-    "plan_timeout": 10.0,
-    "exec_timeout": 100.0,
+    "plan_timeout": 100.0,
+    "exec_timeout": 200.0,
     "disp_tol": 0.5,
     "rot_tol": 30,
     "manager_dt": 0.5,
     "planners": ["tracking"],
     "tests":[
+        {
+            "world_fn": "Model/worlds/world_corridor.xml",
+            "goals": [
+                [0, -10, 0]
+            ]
+        },
         {
             "world_fn": "Model/worlds/TRINA_world_cholera.xml",
             "goals": [

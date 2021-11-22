@@ -1,2 +1,5 @@
 __pycache__
 *.mp4
+res.json
+corridor_res.json
+dump_stats.py

@@ -23,6 +23,9 @@ class Evaluator:
         self.world_model.loadFile(world_fn)
         self.robot_model: klampt.RobotModel = self.world_model.robot("trina")
         self.wheelchair_model: klampt.RobotModel = self.world_model.robot("wheelchair")
+        self.target: np.ndarray = None
+        self.disp_tol: float = 0
+        self.rot_tol: float = 0
         self.stats = {}
         self.trajectory: List[Tuple[List[float], List[float]]] = []
 
@@ -32,6 +35,9 @@ class Evaluator:
         self.eval_traj()
 
     def eval_plan(self, target: np.ndarray, disp_tol: float, rot_tol: float):
+        self.target = target
+        self.disp_tol = disp_tol
+        self.rot_tol = rot_tol
         start = time.monotonic()
         self.p.plan(target, disp_tol, rot_tol)
         self.stats["planning_time"] = time.monotonic() - start
@@ -48,6 +54,18 @@ class Evaluator:
                 count += 1
             except StopIteration:
                 break
+        wheelchair_cfg = self.wheelchair_model.getConfig()
+        wheelchair_xy = np.array([
+            wheelchair_cfg[self.wheelchair_dofs[0]],
+            wheelchair_cfg[self.wheelchair_dofs[1]]
+        ])
+        wheelchair_yaw = wheelchair_cfg[self.wheelchair_dofs[2]]
+        if (np.linalg.norm(wheelchair_xy - self.target[:2]) <= self.disp_tol and
+            abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol
+        ):
+            self.stats["success"] = True
+        else:
+            self.stats["success"] = False
         self.stats["execution_time"] = time.monotonic() - start_exec
         self.stats["execution_time"] += count * self.p.dt
 
