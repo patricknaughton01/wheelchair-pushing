@@ -147,6 +147,7 @@ class Tracker:
             break
         if collides:
             return "collision"
+        # In world frame, translation vectors from wheelchair base to handles
         w_p_w_bl = so3.apply(w_t_wb[0], self.w_t_bl[1])
         w_p_w_br = so3.apply(w_t_wb[0], self.w_t_br[1])
         omega = np.array([0, 0, vel[1]])

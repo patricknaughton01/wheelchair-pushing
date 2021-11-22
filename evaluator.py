@@ -38,16 +38,18 @@ class Evaluator:
 
     def eval_exec(self):
         start_exec = time.monotonic()
+        count = 0
         while True:
             try:
                 cfgs = self.p.next()
                 self.trajectory.append(cfgs)
                 self.robot_model.setConfig(cfgs[0])
                 self.wheelchair_model.setConfig(cfgs[1])
-                time.sleep(self.p.dt)
+                count += 1
             except StopIteration:
                 break
         self.stats["execution_time"] = time.monotonic() - start_exec
+        self.stats["execution_time"] += count * self.p.dt
 
     def eval_traj(self):
         trina_cfg_dist = 0
@@ -64,7 +66,7 @@ class Evaluator:
             rc1 = self.trajectory[i][0]
             rc2 = self.trajectory[i+1][0]
             wc1 = self.trajectory[i][1]
-            wc2 = self.trajectory[i+1][0]
+            wc2 = self.trajectory[i+1][1]
             bc1 = extract_cfg(rc1, self.base_dofs)
             bc2 = extract_cfg(rc2, self.base_dofs)
             wbc1 = extract_cfg(wc1, self.wheelchair_dofs)
