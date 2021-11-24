@@ -2,6 +2,7 @@ import numpy as np
 from .nmpc import *
 from .trajectory import *
 from typing import Dict, List, Tuple
+from .helper import diff_angle
 
 class StateLattice:
     """generate state lattice (SL) for wheelchair mode
@@ -60,10 +61,10 @@ class StateLattice:
                     success = opt.step(stateCurrent = self.idx2pos(x_cur_idx), stateTarget = self.idx2pos(x_tgt_idx), interpolation=False, initMethod = 'linear')
                     if success:
                         tgts.append(x_tgt_idx)
-                        states_w.append(opt.state_sol)
-                        ctrls_w.append(opt.ctrl_sol)
-                        states_r.append(opt.robot_state_sol)
-                        costs.append(opt.cost_value)
+                        states_w.append(np.round(opt.state_sol,2))
+                        ctrls_w.append(np.round(opt.ctrl_sol,2))
+                        states_r.append(np.round(opt.robot_state_sol,2))
+                        costs.append(np.round(opt.cost_value,2))
                         # print(opt.cost_value)
                 # self.update_data(states_wi, ctrls_wi, states_ri, costs_i)
             self.data.update({x_cur_idx: {'targets': tgts, 'states_w': states_w, 'ctrls_w': ctrls_w, 'states_r': states_r, 'costs': costs}})
@@ -100,8 +101,8 @@ class StateLattice:
             sl_type = 0 if psi_idx_inc%2 == 0 else 1
             psi_idx_inc -= sl_type
             for x_cur_idx in self.cur_idx[sl_type]:
-                psi_w_n = self.trans_psi(x_cur_idx[2], psi_idx_inc)
-                psi_r_n = self.trans_psi(x_cur_idx[3], psi_idx_inc)
+                psi_w_n = (x_cur_idx[2] + psi_idx_inc) % 8
+                psi_r_n = (x_cur_idx[3] + psi_idx_inc) % 8
                 x_cur_new = (0,0,psi_w_n,psi_r_n)
                 # print(f"x_cur_idx: {x_cur_idx}")
                 # print(f"x_cur_new: {x_cur_new}")
@@ -121,8 +122,9 @@ class StateLattice:
         states_w, states_r = [], []
         theta = self.psi_set[(psi_idx_inc + 3)%8] 
         R = self.M_R(theta)
-        tgts = self.trans_state(data['targets'], R, psi_idx_inc).astype(int)
-        
+
+        tgts = self.trans_state_idx(data['targets'], R, psi_idx_inc)
+
         for i in range(n):
             states_w.append(self.trans_state(data['states_w'][i], R, psi_idx_inc))
             states_r.append(self.trans_state(data['states_r'][i], R, psi_idx_inc))
@@ -144,6 +146,22 @@ class StateLattice:
         psi = self.trans_psi(state[:, 2:], psi_idx_inc)
         return np.concatenate((xy,psi), axis = 1)
 
+    def trans_state_idx(self, state, R, psi_idx_inc):
+        """translate state with given delta_psi
+
+        Args:
+            state ([list/array]): [state: [x,y,psi_w,psi_r]]
+            R (ndarray): rotation matrix
+            psi_idx_inc (int): index for delta psi 
+
+        Returns:
+            ndarray: transformed state
+        """
+        state = np.asarray(state)
+        xy = self.trans_xy(state[:, 0:2], R)
+        psi = (state[:, 2:] + psi_idx_inc) % 8
+        return np.concatenate((xy,psi), axis = 1).astype(int)
+
     def trans_xy(self, xy, R):
         """translate xy coordinates
 
@@ -154,7 +172,7 @@ class StateLattice:
         Returns:
             [ndarray]: [rotated xy]
         """
-        return np.dot(R, xy.T).T
+        return np.round(np.dot(R, xy.T).T,2)
 
     def trans_psi(self, psi, psi_idx_inc):
         """transform psi
@@ -166,7 +184,12 @@ class StateLattice:
         Returns:
             [ndarray]: transformed psi
         """
-        return (np.asarray(psi) + psi_idx_inc) % 8
+        # return (np.asarray(psi) + psi_idx_inc) % 8
+        delta_psi = -psi_idx_inc * np.pi/4
+        for i in range(psi.shape[0]):
+            for j in range(psi.shape[1]):
+                psi[i,j] = diff_angle(psi[i,j], delta_psi)
+        return psi
 
     def idx2pos(self, idx: Tuple[int, int, int, int]) -> np.ndarray:
         """index to position
