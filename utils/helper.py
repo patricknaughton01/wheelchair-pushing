@@ -1,5 +1,6 @@
 import yaml
 import pprint
+import numpy as np
 
 class Config:
     def __init__(self, configFilename):
