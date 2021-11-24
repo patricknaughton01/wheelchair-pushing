@@ -100,7 +100,8 @@ class nmpc:
         ceq.append(self.robot_state[0, 0] == self.opt_states[0, 0] - self.d*np.cos(self.robot_state[0, 2]))
         ceq.append(self.robot_state[0, 1] == self.opt_states[0, 1] - self.d*np.sin(self.robot_state[0, 2]))
         ceq.append(self.opti.bounded(-1, self.opt_states[:, 2] - self.robot_state[:, 2], 1))
-        ceq.append(self.opti.bounded(-0.64, (self.opt_states[:, 0] - self.robot_state[:, 0])**2 + (self.opt_states[:, 1] - self.robot_state[:, 1])**2, 0.64))
+        slack_d2 = (self.d * 1.2 )**2
+        ceq.append(self.opti.bounded(-slack_d2, (self.opt_states[:, 0] - self.robot_state[:, 0])**2 + (self.opt_states[:, 1] - self.robot_state[:, 1])**2, slack_d2))
         return ceq
 
     def getCollocationConstraints(self,state1,state2,model,h):
