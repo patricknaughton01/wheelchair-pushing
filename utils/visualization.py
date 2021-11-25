@@ -62,7 +62,7 @@ def plotCtrl(ctrl_w):
     axs.legend()
 
 def plot_path(path):
-    axs = plotCfg1(size = [6,6], sub = 1,  title = '', labels = ['x (m)', 'y (m)'])
+    axs = plotCfg1(size = [6,6], sub = 1,  title = '', labels = ['y (m)', 'x (m)'])
     axs.plot(path[:,0], path[:,1], linestyle = '-', marker = 'o')  
     axs.legend()
     return axs

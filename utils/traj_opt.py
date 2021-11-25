@@ -1,10 +1,6 @@
 import numpy as np
 import casadi as ca
-class nmpc:
-    """
-    Todo: seperate nmpc with objective funtion
-    nonlinear mpc
-    """
+class TrajOpt:
     def __init__(self, sys, mode = 'TT', N = None):
         self.sys = sys
         self.opti = ca.Opti()
@@ -14,6 +10,8 @@ class nmpc:
         self.R = np.array(self.sys.optParam['R'])
         self.Q_R = np.array(self.sys.optParam['Q_R'])
         self.d = self.sys.sets['d']
+        self.sys.sets['state_min'][2] = -np.pi
+        self.sys.sets['state_max'][2] = np.pi
 
         self.f = self.sys.model
         self.opt_controls =  self.opti.variable(self.N, self.sys.ctrl_dim)

@@ -1,5 +1,5 @@
 import numpy as np
-from .nmpc import *
+from .traj_opt import *
 from .trajectory import *
 from typing import Dict, List, Tuple
 from .helper import diff_angle
@@ -57,7 +57,7 @@ class StateLattice:
                 for i in np.linspace(-1,1,3):
                     x_tgt_idx = x + [x[2]+int(i)]
                     self.update_umin(x) # handle turning case, as the u is constrained to positive for other cases
-                    opt = nmpc(self.sys)
+                    opt = TrajOpt(self.sys)
                     success = opt.step(stateCurrent = self.idx2pos(x_cur_idx), stateTarget = self.idx2pos(x_tgt_idx), interpolation=False, initMethod = 'linear')
                     if success:
                         tgts.append(x_tgt_idx)
@@ -261,7 +261,7 @@ class StateLattice:
             axs.plot(data['states_r'][i][0,0],data['states_r'][i][0,1], marker = '>', color = 'red') 
             axs.plot(data['states_w'][i][-1,0],data['states_w'][i][-1,1], marker = 'o', color = 'g')
             if plot_idx:
-                axs.text(data['states_w'][i][label_idx,0], data['states_w'][i][label_idx,1], i)#bbox=dict(fill=False, edgecolor='red', linewidth=2)
+                axs.text(data['states_w'][i][label_idx,0], data['states_w'][i][label_idx,1], i,  fontsize = 15)#bbox=dict(fill=False, edgecolor='red', linewidth=2)
             if plot_cost:
                 axs.text(data['states_w'][i][label_idx,0], data['states_w'][i][label_idx,1]+0.1*(r_orien_idx-1), "{:.2f}".format(data['costs'][i]))#bbox=dict(fill=False, edgecolor='red', linewidth=2)
             if plot_dir:

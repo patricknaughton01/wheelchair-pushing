@@ -1,6 +1,6 @@
 import numpy as np
 from .helper import diff_angle
-from .nmpc import *
+from .traj_opt import *
 
 class TWSys():
     def __init__(self, cfg, seed = 0):
@@ -10,7 +10,7 @@ class TWSys():
         self.obs_dim = cfg['system']['obs_dim']
         self.name = cfg['system']['name']
         self.optParam = cfg['trajOpt']
-        self.opt = nmpc(self)
+        self.opt = TrajOpt(self)
 
     @property
     def model(self):
