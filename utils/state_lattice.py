@@ -26,12 +26,15 @@ class StateLattice:
         self.x_curs_diag_idx = [(0,0,4,3),(0,0,4,4),(0,0,4,5)]
         self.cur_idx = [self.x_curs_axis_idx, self.x_curs_diag_idx]
         
-        self.axis_idx = [[0,0,2], [0,0,4], [2, 2, 4], [2, 1, 3], [2, 1,  4], [2, 0, 4], 
-                            [2, 0, 2], [2, -1, 2], [2, -1, 3], [2, -2, 2],
-                            [1, 1, 5], [1, 0, 3], [1, -1, 1]]
-        self.diag_idx = [[0,0,3], [0,0,5], [0, 2, 5], [0, 2, 6], [1, 2, 3], [1, 2, 4],[1, 2, 5], [2, 2, 3], 
-                            [2, 2, 5], [0, 1, 6],[1, 1, 4], [2, 1, 3], [2, 1, 4], [2, 1, 5],
-                           [1, 0, 2], [2, 0, 2], [2, 0, 3]]
+        self.axis_idx = [[0, 0, 2], [0, 0, 4], 
+                         [1, 1, 5], [2, 2, 4], [2, 1, 3], [2, 1,  4], [2, 0, 4], 
+                         [1, 0, 3], 
+                         [2, 0, 2], [2, -1, 2], [2, -1, 3], [2, -2, 2], [1, -1, 1]]
+
+        self.diag_idx = [[0, 0, 3], [0, 0, 5], 
+                         [0, 1, 6], [0, 2, 5], [0, 2, 6], [1, 2, 3], [1, 2, 4],[1, 2, 5], [2, 2, 3], 
+                         [1, 1, 4], 
+                         [2, 2, 5], [2, 1, 3], [2, 1, 4], [2, 1, 5], [2, 0, 2], [2, 0, 3], [1, 0, 2]]
         self.tgt_idx = [self.axis_idx, self.diag_idx]
 
         # actural delta pose
@@ -64,7 +67,7 @@ class StateLattice:
                         states_w.append(np.round(opt.state_sol,2))
                         ctrls_w.append(np.round(opt.ctrl_sol,2))
                         states_r.append(np.round(opt.robot_state_sol,2))
-                        costs.append(np.round(opt.cost_value,2))
+                        costs.append(np.round(opt.c1_value + opt.c2_value + opt.c3_value,2))
                         # print(opt.cost_value)
                 # self.update_data(states_wi, ctrls_wi, states_ri, costs_i)
             self.data.update({x_cur_idx: {'targets': tgts, 'states_w': states_w, 'ctrls_w': ctrls_w, 'states_r': states_r, 'costs': costs}})
@@ -141,7 +144,7 @@ class StateLattice:
         Returns:
             ndarray: transformed state
         """
-        state = np.asarray(state)
+        state = np.array(state)
         xy = self.trans_xy(state[:, 0:2], R)
         psi = self.trans_psi(state[:, 2:], psi_idx_inc)
         return np.concatenate((xy,psi), axis = 1)
@@ -157,7 +160,7 @@ class StateLattice:
         Returns:
             ndarray: transformed state
         """
-        state = np.asarray(state)
+        state = np.array(state)
         xy = self.trans_xy(state[:, 0:2], R)
         psi = (state[:, 2:] + psi_idx_inc) % 8
         return np.concatenate((xy,psi), axis = 1).astype(int)
@@ -261,9 +264,9 @@ class StateLattice:
             axs.plot(data['states_r'][i][0,0],data['states_r'][i][0,1], marker = '>', color = 'red') 
             axs.plot(data['states_w'][i][-1,0],data['states_w'][i][-1,1], marker = 'o', color = 'g')
             if plot_idx:
-                axs.text(data['states_w'][i][label_idx,0], data['states_w'][i][label_idx,1], i,  fontsize = 15)#bbox=dict(fill=False, edgecolor='red', linewidth=2)
+                axs.text(data['states_w'][i][label_idx,0] + 0.1*(i%3 - 1 ), data['states_w'][i][label_idx,1], i,  fontsize = 10)#bbox=dict(fill=False, edgecolor='red', linewidth=2)
             if plot_cost:
-                axs.text(data['states_w'][i][label_idx,0], data['states_w'][i][label_idx,1]+0.1*(r_orien_idx-1), "{:.2f}".format(data['costs'][i]))#bbox=dict(fill=False, edgecolor='red', linewidth=2)
+                axs.text(data['states_w'][i][label_idx,0], data['states_w'][i][label_idx,1]+0.05*(r_orien_idx-1), "{:.2f}".format(data['costs'][i]))#bbox=dict(fill=False, edgecolor='red', linewidth=2)
             if plot_dir:
                 # if np.tan(data['states_r'][i].obs[-1,2])<5 and np.tan(data['states_r'][i][-1,2])>-5:
                     # axs.arrow(data['states_r'][i][-1,0], data['states_r'][i][-1,1], 0.1, np.tan(data['states_r'][i][-1,2])*0.1, head_width=0.05, head_length=0.05 , fc='yellow', ec='grey') 
