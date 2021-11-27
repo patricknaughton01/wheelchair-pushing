@@ -92,7 +92,8 @@ class StateLatticePlanner(Planner):
             self.close_set[self.tgt_idx] = float('inf')
         while (self.tgt_idx not in self.close_set) and len(self.open_set) > 0:
             _, min_dist, min_ind = heapq.heappop(self.open_set)
-            # print(f"len open set: { len(self.open_set)}")
+            if len(self.open_set)%5000 == 1:
+                print(f"len open set: { len(self.open_set)}, min_ind: {min_ind}")
             if min_ind not in self.close_set:
                 # print("Expanding", min_ind)
                 self.close_set[min_ind] = min_dist
@@ -200,6 +201,7 @@ class StateLatticePlanner(Planner):
         return suc_nodes, suc_data, orien_idx
 
     def retrive_traj(self):
+        print("retrive trajectory")
         end = self.tgt_idx
         nodes, states_w, states_r, action_taken = [self.tgt], [], [], []
         while end != self.start_idx:
@@ -210,23 +212,36 @@ class StateLatticePlanner(Planner):
             states_r.insert(0,self.pos_l2g(prev_w_pose, self.traj[end]['state_r']))
             action_taken.insert(0,self.traj[end]['action_taken'])
             end = prev
-        print(f"nodes length: {len(nodes)}")
+        print(f"nodes count: {len(nodes)}")
         self.traj_w = np.asarray(states_w).reshape(-1, 3)
         self.traj_r = np.asarray(states_r).reshape(-1, 3)
-        # self.gen_cfg_buffer(traj_w, traj_r)
         return np.asarray(nodes), self.traj_w, self.traj_r, np.asarray(action_taken)
 
-    # def gen_cfg_buffer(self, traj_w, traj_r):
+    # def _cost_obs(self, ind_w, ind_w_prev, pos_r_l) -> float:
+    #     # TODO: can't check both somehow
+    #     # pos_w = self._ind_to_pos(ind_w)
+    #     # c_w = self._collides_w(pos_w)
+    #     # if c_w:
+    #     #     return float('inf')
+    #     pos_w_prev = self._ind_to_pos(ind_w_prev)
+    #     pos_r = [pos_w_prev[0] + pos_r_l[0], pos_w_prev[1] + pos_r_l[1], pos_r_l[2]]
+    #     c_r = self._collides_r(pos_r)
+    #     if c_r:
+    #         return float('inf')
+    #     return 0
+
     def _cost_obs(self, ind_w, ind_w_prev, pos_r_l) -> float:
-        # TODO: can't check both somehow
-        # pos_w = self._ind_to_pos(ind_w)
-        # c_w = self._collides_w(pos_w)
-        # if c_w:
-        #     return float('inf')
+        pos_w = self._ind_to_pos(ind_w)
         pos_w_prev = self._ind_to_pos(ind_w_prev)
         pos_r = [pos_w_prev[0] + pos_r_l[0], pos_w_prev[1] + pos_r_l[1], pos_r_l[2]]
-        c_r = self._collides_r(pos_r)
-        if c_r:
+        cfg_w,  cfg_r = self._wheelchair_np_to_cfg(pos_w), self._robot_np_to_cfg(pos_r)
+        self.set_configs([cfg_r, cfg_w])
+
+        collides = False
+        for _ in self.collider.collisions():
+            collides = True
+            break
+        if collides:
             return float('inf')
         return 0
 
@@ -377,8 +392,8 @@ class StateLatticePlanner(Planner):
         self.set_arm_cfg('l', l_cfg)
         self.set_arm_cfg('r', r_cfg)
 
-        self.T_ww_init = se3.inv(wheelchair_model.link(self.w_base_name).getTransform())
-        self.T_rw_init = se3.inv(robot_model.link(self.base_name).getTransform())
+        self.T_ww_init = se3.inv(self.wheelchair_model.link(self.w_base_name).getTransform())
+        self.T_rw_init = se3.inv(self.robot_model.link(self.base_name).getTransform())
         print(f"w world trans: {self.T_ww_init}")
         print(f"r world trans: {self.T_rw_init}")
         self.init_configs = self.get_configs()
