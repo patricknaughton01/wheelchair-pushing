@@ -1,9 +1,9 @@
 from typing_extensions import Concatenate
 import numpy as np
 from typing import List, Dict, Tuple
-from utils.state_lattice import *
-from utils.helper import *
-from utils.tw import *
+from utils_.state_lattice import *
+from utils_.helper import *
+from utils_.tw import *
 import heapq
 import json
 from consts import SETTINGS_PATH
@@ -83,8 +83,8 @@ class StateLatticePlanner(Planner):
         self.tgt_idx = self._pos_to_ind(tgt)
         super().plan(tgt, disp_tol, rot_tol)
         cfg = self._wheelchair_np_to_cfg(tgt)
-        # gp = GridPlanner(self.world_fn, cfg, self.sl.r)
         # warm start the grid planner
+        # gp = GridPlanner(self.world_fn, cfg, self.sl.r)
         # gp.get_dist(tgt)
         # print("warm start initialization")
         if self._collides_w(self.tgt):
