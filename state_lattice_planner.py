@@ -9,7 +9,7 @@ import json
 from consts import SETTINGS_PATH
 from planner import Planner
 import klampt
-from klampt.math import se3, so3
+from klampt.math import se3, so3, so2
 from klampt.model import ik, collide
 from grid_planner import GridPlanner
 from tracker import mirror_arm_config
@@ -31,6 +31,7 @@ class StateLatticePlanner(Planner):
         self.w_base_name = "base_link"
         self.robot_model: klampt.RobotModel = self.world_model.robot("trina")
         self.wheelchair_model: klampt.RobotModel = self.world_model.robot("wheelchair")
+
         self.wheelchair_dofs = self.settings["wheelchair_dofs"]
 
         self.w_t_bl = se3.mul(
@@ -82,14 +83,16 @@ class StateLatticePlanner(Planner):
         self.tgt_idx = self._pos_to_ind(tgt)
         super().plan(tgt, disp_tol, rot_tol)
         cfg = self._wheelchair_np_to_cfg(tgt)
-        gp = GridPlanner(self.world_fn, cfg, self.sl.r)
+        # gp = GridPlanner(self.world_fn, cfg, self.sl.r)
         # warm start the grid planner
-        gp.get_dist(tgt)
+        # gp.get_dist(tgt)
         # print("warm start initialization")
-        if self._collides(self.tgt_idx):
+        if self._collides_w(self.tgt):
+            print("Tgt collides with obstacles!!!")
             self.close_set[self.tgt_idx] = float('inf')
         while (self.tgt_idx not in self.close_set) and len(self.open_set) > 0:
             _, min_dist, min_ind = heapq.heappop(self.open_set)
+            # print(f"len open set: { len(self.open_set)}")
             if min_ind not in self.close_set:
                 # print("Expanding", min_ind)
                 self.close_set[min_ind] = min_dist
@@ -97,20 +100,22 @@ class StateLatticePlanner(Planner):
                 for i, n_ind in enumerate(suc_nodes):
                     if n_ind in self.close_set:
                         continue
-                    cand_cost = suc_data['costs'][i] + min_dist + self._cost_obs(n_ind)
+                    # print(f"suc_data['states_r'][i][-1,:]: {suc_data['states_r'][i][-1,:]}")
+                    cand_cost = suc_data['costs'][i] + min_dist + self._cost_obs(n_ind, min_ind, suc_data['states_r'][i][-1,:])
                     best_known_dist = self.open_d_map.get(n_ind, float('inf'))
                     if cand_cost < best_known_dist:
-                        n_pos = self._ind_to_pos(n_ind)
                         # euclidean heuristic
                         heapq.heappush(self.open_set,(self.euclidean_heuristic(n_ind) + cand_cost, cand_cost, n_ind))
                         # Dijkstra heuristic
+                        # n_pos = self._ind_to_pos(n_ind)
                         # heapq.heappush(self.open_set,(gp.get_dist(n_pos) + cand_cost, cand_cost, n_ind))
                         self.open_d_map[n_ind] = cand_cost
                         self.traj[n_ind] = {'prev': min_ind, 'state_w': suc_data['states_w'][i], 'state_r':suc_data['states_r'][i], 'action_taken': [orien_idx, i]}
+        
+        self.set_configs(self.init_configs) # reset robot and wheelchair pose to the initial ones after plan
         return self.retrive_traj()
 
     def next(self):
-        # self._check_target()
         # Check for termination:
         wheelchair_cfg = self.wheelchair_model.getConfig()
         wheelchair_xy = np.array([
@@ -122,8 +127,8 @@ class StateLatticePlanner(Planner):
             if abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol:
                 print("Arrived!")
                 raise StopIteration
+
         # gen config
-        # print(f"gen config from w_np: {self.traj_w[:10, :]} and r_np: {self.traj_r[:10, :]}")
         res = self.get_target_config(self.traj_w[self.cfg_ind, :], self.traj_r[self.cfg_ind, :])
         if res != "success":
             print(f"fail to get target config due to {res}")
@@ -131,19 +136,15 @@ class StateLatticePlanner(Planner):
         self.cfg_ind += 1
         
     def get_target_config(self, w_np, r_np) -> List[float]:
-        print(f"gen config from w_np: {w_np} and r_np: {r_np}")
+        # print(f"gen config from w_np: {w_np} and r_np: {r_np}")
         w_q = self._wheelchair_np_to_cfg(w_np)
         self.wheelchair_model.setConfig(w_q)
 
-        collides = False
-        for _ in self.collider.collisions():
-            collides = True
-            break
-        if collides:
-            return "collision"
-
         r_q = self._robot_np_to_cfg(r_np)
         self.robot_model.setConfig(r_q)
+        # print("configs")
+        # print(np.asarray(self.wheelchair_model.getConfig())[[0,1,3]])
+        # print(np.asarray(self.robot_model.getConfig())[[0,1,3]])
 
         for i in range(2):
             if i == 0:
@@ -159,16 +160,18 @@ class StateLatticePlanner(Planner):
             t_wee = se3.mul(
                 self.wheelchair_model.link(handle_name).getTransform(),
                 self.t_hee)
+            # print(f"t_wee: {t_wee}")
             goal = ik.objective(link, R=t_wee[0], t=t_wee[1])
-            if not ik.solve_nearby(goal, 1, activeDofs=dofs):
+            if not ik.solve(goal, activeDofs=dofs):
                 return "ik"
-        collides = False
-        for _ in self.collider.collisions():
-            collides = True
-            break
-        if self.robot_model.selfCollides() or collides:
-            print("collision detected!")
-            return "collision"
+        # TODO: check what's caused the collision
+        # collides = False
+        # for _ in self.collider.collisions():
+        #     collides = True
+        #     break
+        # if collides:
+        #     print("collision detected!")
+        #     return "collision"
         return "success"
 
     def get_configs(self) -> Tuple[List[float], List[float]]:
@@ -203,9 +206,8 @@ class StateLatticePlanner(Planner):
             prev = self.traj[end]['prev']
             prev_w_pose = self._ind_to_pos(prev)
             nodes.insert(0,list(prev_w_pose))
-            states_w.insert(0,self.state_l2g(prev_w_pose, self.traj[end]['state_w']))
-            states_r.insert(0,self.state_l2g(prev_w_pose, self.traj[end]['state_r']))
-
+            states_w.insert(0,self.pos_l2g(prev_w_pose, self.traj[end]['state_w']))
+            states_r.insert(0,self.pos_l2g(prev_w_pose, self.traj[end]['state_r']))
             action_taken.insert(0,self.traj[end]['action_taken'])
             end = prev
         print(f"nodes length: {len(nodes)}")
@@ -215,12 +217,20 @@ class StateLatticePlanner(Planner):
         return np.asarray(nodes), self.traj_w, self.traj_r, np.asarray(action_taken)
 
     # def gen_cfg_buffer(self, traj_w, traj_r):
-    def _cost_obs(self, ind: Tuple[int, int]) -> float:
-        if self._collides(ind):
+    def _cost_obs(self, ind_w, ind_w_prev, pos_r_l) -> float:
+        # TODO: can't check both somehow
+        # pos_w = self._ind_to_pos(ind_w)
+        # c_w = self._collides_w(pos_w)
+        # if c_w:
+        #     return float('inf')
+        pos_w_prev = self._ind_to_pos(ind_w_prev)
+        pos_r = [pos_w_prev[0] + pos_r_l[0], pos_w_prev[1] + pos_r_l[1], pos_r_l[2]]
+        c_r = self._collides_r(pos_r)
+        if c_r:
             return float('inf')
         return 0
 
-    def state_l2g(self, origin, state):
+    def pos_l2g(self, origin, state):
         """shift state with respect to the origin
 
         Args:
@@ -231,10 +241,7 @@ class StateLatticePlanner(Planner):
             ndarray: transformed states
         """
         xy = state[:,0:2] + origin[0:2]
-        psi = []
-        for i in range(state.shape[0]):
-            psi.append(diff_angle(state[i, 2], -origin[2]))
-        psi = np.asarray(psi).reshape(-1,1)
+        psi = np.array(state[:,2]).reshape(-1,1)
         return np.concatenate((xy, psi), axis = 1).tolist()
 
     def get_init_robot_state(self, cur_w_pose):
@@ -266,24 +273,26 @@ class StateLatticePlanner(Planner):
     def _ind_to_pos(self, ind: Tuple[int, int, int, int]) -> np.ndarray:
         return self.sl.idx2pos(ind)
     
-    def _ind_to_cfg(self, ind: Tuple[int, int, int, int]) -> List[float]:
-        pos = self._ind_to_pos(ind)
-        cfg = self.wheelchair_model.getConfig()
-        cfg[self.wheelchair_dofs[0]] = pos[0]
-        cfg[self.wheelchair_dofs[1]] = pos[1]
-        cfg[self.wheelchair_dofs[2]] = pos[2]
-        return cfg
-
-    def _collides(self, ind: Tuple[int, int, int, int]) -> bool:
-        self.wheelchair_model.setConfig(self._ind_to_cfg(ind))
+    def _collides_w(self, pos_w) -> bool:
+        self.wheelchair_model.setConfig(self._wheelchair_np_to_cfg(pos_w))
         collides = False
         for _ in self.collider.collisions():
             collides = True
+            # print(f"collision detected on wheelchair pos: {pos_w}")
+            break
+        return collides
+
+    def _collides_r(self, pos_r) -> bool:
+        self.robot_model.setConfig(self._robot_np_to_cfg(pos_r))
+        collides = False
+        for _ in self.collider.collisions():
+            collides = True
+            # print(f"collision detected on robot pos: {pos_r}")
             break
         return collides
     
     def _ignore_collision_pairs(self):
-        # For this planner, ignore collisions between the wheelchair and robot
+        # ignore collisions between the wheelchair and robot
         for i in range(self.wheelchair_model.numLinks()):
             for j in range(self.robot_model.numLinks()):
                 link_a = self.wheelchair_model.link(i)
@@ -334,13 +343,13 @@ class StateLatticePlanner(Planner):
     def _wheelchair_np_to_cfg(self, w_np: List[float]) -> List[float]:
         cfg = self.wheelchair_model.getConfig()
         for i, d in enumerate(self.wheelchair_dofs):
-            cfg[d] = w_np[i]
+            cfg[d] = w_np[i]  + self.T_ww_init[1][i] 
         return cfg
 
     def _robot_np_to_cfg(self, r_np: List[float]) -> List[float]:
         cfg = self.robot_model.getConfig()
         for i, d in enumerate(self.base_dofs):
-            cfg[d] = r_np[i]
+            cfg[d] = r_np[i] + self.T_rw_init[1][i]   # need to consider the initial pose of the robot
         return cfg
 
     def _get_t_hee(self) -> tuple:
@@ -356,6 +365,9 @@ class StateLatticePlanner(Planner):
             self.wheelchair_model.link(self.left_handle_name).getTransform(),
             self.t_hee)
         self.set_arm_cfg('l', self.settings["configs"]["home"])
+        # print("init configs")
+        # print(np.asarray(self.wheelchair_model.getConfig())[[0,1,3]])
+        # print(np.asarray(self.robot_model.getConfig())[[0,1,3]])
         goal = ik.objective(self.robot_model.link(self.left_name),
             R=t_wee[0], t=t_wee[1])
         if not ik.solve(goal, activeDofs=self.left_dofs):
@@ -364,6 +376,13 @@ class StateLatticePlanner(Planner):
         r_cfg = mirror_arm_config(l_cfg)
         self.set_arm_cfg('l', l_cfg)
         self.set_arm_cfg('r', r_cfg)
+
+        self.T_ww_init = se3.inv(wheelchair_model.link(self.w_base_name).getTransform())
+        self.T_rw_init = se3.inv(robot_model.link(self.base_name).getTransform())
+        print(f"w world trans: {self.T_ww_init}")
+        print(f"r world trans: {self.T_rw_init}")
+        self.init_configs = self.get_configs()
+        print(f"cache init configs: {self.init_configs}")
 
     def get_arm_cfg(self, side: str, cfg: List[float]) -> np.ndarray:
         if side.lower().startswith("l"):
@@ -399,26 +418,16 @@ if __name__ == "__main__":
     cfg = Config("params/tw.yaml")
     sys = TWSys(cfg.value, seed = 0)
     sl = StateLattice(sys)
-    logs = sl.load("logs/sl_1.npy")
+    logs = sl.load("logs/sl.npy")
 
     planner = StateLatticePlanner(sl, world_fn, dt)
-    planner.plan(np.array([5.0, 5.0, 0.0, 0.0]), 0.5, 0.5)
+    planner.plan(np.array([0, -10, 0.0, 0.0]), 0.5, 0.5)
 
     iter = 0
     vis.add("world", world)
     vis.show()
     while vis.shown():
         iter += 1
-        # robot_model.setConfig(planner.robot_model.getConfig())
-        # wheelchair_model.setConfig(planner.wheelchair_model.getConfig())
-        # configs = planner.get_configs()
-        # print("configs")
-        # print(np.asarray(robot_model.getConfig())[[0,1,3]])
-        # print(np.asarray(wheelchair_model.getConfig())[[0,1,3]])
-
-        # print(f"w base trans: {wheelchair_model.link(planner.w_base_name).getTransform()}")
-        # print(f"r base trans: {robot_model.link(planner.base_name).getTransform()}")
-
         try:
             planner.next()
             robot_model.setConfig(planner.robot_model.getConfig())
