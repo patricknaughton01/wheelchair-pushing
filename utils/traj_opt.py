@@ -29,7 +29,8 @@ class TrajOpt:
 
         self.tgt_traj =  self.opti.parameter(self.N, self.sys.obs_dim)
 
-        self.obj, self.cost = self.getTTCost()   
+        # self.obj, self.cost = self.getTTCost()   
+        self.obj, self.c1, self.c2, self.c3 = self.getTTCost()   
         self.opti.minimize(self.obj)
         self.opti.subject_to(self.getConstraints())
         self.opti.subject_to(self.getStateCtrlBounds())
@@ -55,26 +56,30 @@ class TrajOpt:
         Set up objective function for standard MPC formulation
         return: objective expression
         """
-        obj, cost = 0, 0
+        obj, c1, c2, c3 = 0, 0, 0, 0
         for i in range(self.N-1):
             obj +=  (ca.mtimes([(self.opt_states[i, :]-self.opt_xs.T), self.Q, (self.opt_states[i, :]-self.opt_xs.T).T])
                     + ca.mtimes([self.opt_controls[i, :], self.R, self.opt_controls[i, :].T]))
             obj +=  (ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), self.Q_R[:2,:2], (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
+            obj += (ca.mtimes([(self.robot_state[i, 2]-self.opt_psis), self.Q_R[2,2], (self.robot_state[i, 2]-self.opt_psis)]))
+            # if i != 0:
+                # obj +=  ca.sqrt(ca.mtimes([(self.robot_state[i, 2]-self.opt_states[i, 2]), 0, (self.robot_state[i, 2]-self.opt_states[i, 2])]))
+
             # try to make the cost more resonable in terms of the distance traveled by the robot
             # obj +=  (ca.mtimes([(self.robot_state[i+1, :]-self.robot_state[-1, :]), self.Q_R * 1.0 / (i/2.0 + 1), (self.robot_state[i+1, :]-self.robot_state[-1, :]).T]))
         obj +=  (ca.mtimes([(self.opt_states[-1, :]-self.opt_xs.T), self.Q, (self.opt_states[-1, :]-self.opt_xs.T).T])
                     + ca.mtimes([self.opt_controls[-1, :], self.R, self.opt_controls[-1, :].T]))
 
-        a = 0.6
         for i in range(self.N-1):
-            cost += a * ca.sqrt(ca.mtimes([(self.opt_states[i+1, :2]-self.opt_states[i, :2]), self.Q[:2,:2], (self.opt_states[i+1, :2]-self.opt_states[i, :2]).T]))
-            cost += (1-a) * ca.sqrt(ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), self.Q_R[:2,:2], (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
+            c1 += ca.sqrt(ca.mtimes([(self.opt_states[i+1, :2]-self.opt_states[i, :2]), self.Q[:2,:2], (self.opt_states[i+1, :2]-self.opt_states[i, :2]).T]))
+            c2 += ca.sqrt(ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), self.Q_R[:2,:2], (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
+            c3 += ca.sqrt(ca.mtimes([(self.robot_state[i, 2]-self.opt_states[i, 2]), self.Q_R[2,2], (self.robot_state[i, 2]-self.opt_states[i, 2])]))
             # cost = ca.mtimes([self.opt_controls[i, :], self.R*100, self.opt_controls[i, :].T])
             
             # cost += 0.05*ca.fabs(self.opt_states[i, 2]-self.robot_state[i, 2])
             # cost +=  ca.mtimes([self.opt_controls[i, :], self.R, self.opt_controls[i, :].T])
         # obj += (ca.mtimes([(self.opt_states[self.N-1, :]-self.opt_xs.T), self.Q_N, (self.opt_states[self.N-1, :]-self.opt_xs.T).T]))
-        return obj, cost
+        return obj, c1, c2, c3
 
     def getConstraints(self):
         """
@@ -221,8 +226,13 @@ class TrajOpt:
             self.ctrl_sol = sol.value(self.opt_controls)
             self.state_sol = sol.value(self.opt_states)
             self.obj_value = sol.value(self.obj)
-            self.cost_value = sol.value(self.cost)
+            self.c1_value = sol.value(self.c1)
+            self.c2_value = sol.value(self.c2)
+            self.c3_value = sol.value(self.c3)
+
             # print(f"obj_value: {self.obj_value }, cost_value: {self.cost_value}")
+            # print(f"c1: {self.c1_value }, c2: {self.c2_value}, c3: {self.c3_value}")
+
             self.robot_state_sol = sol.value(self.robot_state)
             self.ctrl_guess, self.state_guess = self.shift_sol(self.ctrl_sol, self.state_sol)
             if interpolation:  
