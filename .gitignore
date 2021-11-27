@@ -3,3 +3,5 @@ __pycache__
 res.json
 corridor_res.json
 dump_stats.py
+.ipynb_checkpoints
+logs
