@@ -14,6 +14,12 @@ from klampt.model import ik, collide
 from grid_planner import GridPlanner
 from tracker import mirror_arm_config
 
+# load state lattice logs
+cfg = Config("params/tw.yaml")
+sys = TWSys(cfg.value, seed = 0)
+sl = StateLattice(sys)
+sl.load("logs/sl.npy")
+
 class StateLatticePlanner(Planner):
     """Planning with state lattice
     """
@@ -430,11 +436,6 @@ if __name__ == "__main__":
     wheelchair_model = world.robot("wheelchair")
 
     dt = 1 / 50
-    cfg = Config("params/tw.yaml")
-    sys = TWSys(cfg.value, seed = 0)
-    sl = StateLattice(sys)
-    logs = sl.load("logs/sl.npy")
-
     planner = StateLatticePlanner(sl, world_fn, dt)
     planner.plan(np.array([0, -10, 0.0, 0.0]), 0.5, 0.5)
 
