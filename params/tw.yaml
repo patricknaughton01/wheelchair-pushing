@@ -10,8 +10,9 @@ space_sets:
     state_min: [-.inf, -.inf, -3.1415927]
     state_max: [.inf, .inf, 3.1415927]
     idx: [0,1,2]
-    res: 0.5
-    d: 0.8
+    res: 0.5 # resolution of grid
+    d: 0.8 # constraint between wheelchair and robot
+    w: 3 # weighted A*
 
 trajOpt:
     N: 20
