@@ -64,14 +64,25 @@ class StateLattice:
                     success = opt.step(stateCurrent = self.idx2pos(x_cur_idx), stateTarget = self.idx2pos(x_tgt_idx), interpolation=False, initMethod = 'linear')
                     if success:
                         tgts.append(x_tgt_idx)
-                        states_w.append(np.round(opt.state_sol,2))
-                        ctrls_w.append(np.round(opt.ctrl_sol,2))
-                        states_r.append(np.round(opt.robot_state_sol,2))
-                        costs.append(np.round(opt.c1_value + opt.c2_value + opt.c3_value,2))
+                        opt.state_sol, opt.robot_state_sol = np.round(opt.state_sol,2), np.round(opt.robot_state_sol,2)
+                        opt_costs = np.round(opt.c1_value + opt.c2_value + opt.c3_value,2)
+                        # cut SL based on control input
+                        cut_idx = self.get_cut_idx(opt.ctrl_sol)
+                        states_w.append(np.delete(opt.state_sol, np.s_[cut_idx:-1], 0))
+                        ctrls_w.append(np.delete(opt.ctrl_sol, np.s_[cut_idx:-1], 0))
+                        states_r.append(np.delete(opt.robot_state_sol, np.s_[cut_idx:-1], 0))
+                        costs.append(np.delete(opt_costs, np.s_[cut_idx:-1], 0))
                         # print(opt.cost_value)
                 # self.update_data(states_wi, ctrls_wi, states_ri, costs_i)
             self.data.update({x_cur_idx: {'targets': tgts, 'states_w': states_w, 'ctrls_w': ctrls_w, 'states_r': states_r, 'costs': costs}})
         print(f"generated {len(tgts)} primitives!")
+
+    def get_cut_idx(self, ctrls):
+        for i in range(1, ctrls.shape[0]):
+            if (ctrls[i,:]< 1e-2).all() and (ctrls[i,:]> -1e-2).all():
+                # print(f"cut at: {i}")
+                return i
+        return ctrls.shape[0]
 
     def gen_data_full(self):
         """generate the full dataset for SL
@@ -255,7 +266,6 @@ class StateLattice:
         """
         data = self.data[self.keys[w_orien_idx*3 + r_orien_idx]]
         n = len(data['states_w'])
-        label_idx = data['states_w'][0].shape[0]//4
 
         for i in range(n):
             axs.plot(data['states_w'][i][:,0],data['states_w'][i][:,1], linestyle = '-', marker = '', color = 'blue')  
@@ -264,9 +274,9 @@ class StateLattice:
             axs.plot(data['states_r'][i][0,0],data['states_r'][i][0,1], marker = '>', color = 'red') 
             axs.plot(data['states_w'][i][-1,0],data['states_w'][i][-1,1], marker = 'o', color = 'g')
             if plot_idx:
-                axs.text(data['states_w'][i][label_idx,0] + 0.1*(i%3 - 1 ), data['states_w'][i][label_idx,1], i,  fontsize = 10)#bbox=dict(fill=False, edgecolor='red', linewidth=2)
+                axs.text(data['states_w'][i][data['states_w'][i].shape[0]//2,0] + 0.1*(i%3 - 1 ), data['states_w'][i][data['states_w'][i].shape[0]//2,1], f"{i},",  fontsize = 10)#bbox=dict(fill=False, edgecolor='red', linewidth=2)
             if plot_cost:
-                axs.text(data['states_w'][i][label_idx,0], data['states_w'][i][label_idx,1]+0.05*(r_orien_idx-1), "{:.2f}".format(data['costs'][i]))#bbox=dict(fill=False, edgecolor='red', linewidth=2)
+                axs.text(data['states_w'][i][data['states_w'][i].shape[0]//2,0], data['states_w'][i][data['states_w'][i].shape[0]//2,1]+0.05*(r_orien_idx-1), "{:.2f}".format(data['costs'][i]))#bbox=dict(fill=False, edgecolor='red', linewidth=2)
             if plot_dir:
                 # if np.tan(data['states_r'][i].obs[-1,2])<5 and np.tan(data['states_r'][i][-1,2])>-5:
                     # axs.arrow(data['states_r'][i][-1,0], data['states_r'][i][-1,1], 0.1, np.tan(data['states_r'][i][-1,2])*0.1, head_width=0.05, head_length=0.05 , fc='yellow', ec='grey') 
