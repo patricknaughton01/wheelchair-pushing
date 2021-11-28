@@ -9,7 +9,7 @@
     "planners": ["tracking", "state_lattice"],
     "tests":[
         {
-            "world_fn": "Model/worlds/world_short_turn.xml",
+            "world_fn": "Model/worlds/world_corridor.xml",
             "goals": [
                 [0, -10, 0]
             ]
