@@ -86,8 +86,8 @@ class StateLatticePlanner(Planner):
             list: [trajectory data]
         """
         self.tgt = np.append(tgt, tgt[2])
-        print(f"start plan for target: {self.tgt }")
         self.tgt_idx = self._pos_to_ind(self.tgt)
+        print(f"start plan for target: {self.tgt } with index {self.tgt_idx}")
         super().plan(tgt, disp_tol, rot_tol)
 
         # warm start the grid planner
@@ -303,7 +303,7 @@ class StateLatticePlanner(Planner):
 
     def _pos_to_ind(self, pos: List) -> Tuple[int, int, int, int]:
         return (int(pos[0] // self.sl.r), int(pos[1] // self.sl.r), \
-                int(pos[2] // self.sl.delta_psi) + 3, int(pos[3] // self.sl.delta_psi) + 3)
+                int((pos[2] / self.sl.delta_psi + 3)%8), int((pos[3] / self.sl.delta_psi + 3)%8))
 
     def _ind_to_pos(self, ind: Tuple[int, int, int, int]) -> np.ndarray:
         return self.sl.idx2pos(ind)
