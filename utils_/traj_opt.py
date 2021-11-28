@@ -19,8 +19,9 @@ class TrajOpt:
         self.robot_state =  self.opti.variable(self.N, 3)
         self.opti.set_initial(self.robot_state, np.zeros((self.N, 3)))
 
-        self.ctrl_guess, self.state_guess = \
-        np.zeros((self.N, self.sys.ctrl_dim)), np.zeros((self.N, self.sys.obs_dim))
+        self.state_guess = np.zeros((self.N, self.sys.obs_dim))
+        self.ctrl_guess = np.zeros((self.N, self.sys.ctrl_dim))
+        # self.ctrl_guess = np.ones((self.N, self.sys.ctrl_dim)) * self.sys.sets['u_max'][0]
         
         self.opt_x0 =  self.opti.parameter(self.sys.obs_dim)
         self.opt_xs =  self.opti.parameter(self.sys.obs_dim)
@@ -58,17 +59,13 @@ class TrajOpt:
         """
         obj, c1, c2, c3 = 0, 0, 0, 0
         for i in range(self.N-1):
-            obj +=  (ca.mtimes([(self.opt_states[i, :]-self.opt_xs.T), self.Q, (self.opt_states[i, :]-self.opt_xs.T).T])
-                    + ca.mtimes([self.opt_controls[i, :], self.R, self.opt_controls[i, :].T]))
-            obj +=  (ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), self.Q_R[:2,:2], (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
+            obj +=  (ca.mtimes([(self.opt_states[i, :]-self.opt_xs.T), self.Q, (self.opt_states[i, :]-self.opt_xs.T).T]))
+            # obj +=   (ca.mtimes([self.opt_controls[i, :], self.R, self.opt_controls[i, :].T])) # minimize control
+            obj +=   (ca.mtimes([(self.opt_controls[i+1, :] - self.opt_controls[i, :]), self.R, (self.opt_controls[i+1, :] - self.opt_controls[i, :]).T]))   # smooth control
+            obj +=  (ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), self.Q_R[:2,:2] , (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
             obj += (ca.mtimes([(self.robot_state[i, 2]-self.opt_psis), self.Q_R[2,2], (self.robot_state[i, 2]-self.opt_psis)]))
-            # if i != 0:
-                # obj +=  ca.sqrt(ca.mtimes([(self.robot_state[i, 2]-self.opt_states[i, 2]), 0, (self.robot_state[i, 2]-self.opt_states[i, 2])]))
-
-            # try to make the cost more resonable in terms of the distance traveled by the robot
-            # obj +=  (ca.mtimes([(self.robot_state[i+1, :]-self.robot_state[-1, :]), self.Q_R * 1.0 / (i/2.0 + 1), (self.robot_state[i+1, :]-self.robot_state[-1, :]).T]))
-        obj +=  (ca.mtimes([(self.opt_states[-1, :]-self.opt_xs.T), self.Q, (self.opt_states[-1, :]-self.opt_xs.T).T])
-                    + ca.mtimes([self.opt_controls[-1, :], self.R, self.opt_controls[-1, :].T]))
+        
+        obj +=  (ca.mtimes([(self.opt_states[-1, :]-self.opt_xs.T), self.Q, (self.opt_states[-1, :]-self.opt_xs.T).T]))
 
         for i in range(self.N-1):
             c1 += ca.sqrt(ca.mtimes([(self.opt_states[i+1, :2]-self.opt_states[i, :2]), self.Q[:2,:2], (self.opt_states[i+1, :2]-self.opt_states[i, :2]).T]))
@@ -207,7 +204,7 @@ class TrajOpt:
             elif initMethod == 'shift':
                 # print("use shifted initial guess")
                 ctrl_init_guess, state_init_guess = self.ctrl_guess, self.state_guess
-        # print("state_init_guess: ", state_init_guess)
+        # print("state_init_guess: ", ctrl_init_guess)
         if UGuess != []:
             ctrl_init_guess = UGuess
         if stateGuess != []:
