@@ -84,11 +84,11 @@ class StateLatticePlanner(Planner):
         Returns:
             list: [trajectory data]
         """
-        print("start plan")
-        self.tgt = tgt
-        self.tgt_idx = self._pos_to_ind(tgt)
+        self.tgt = np.append(tgt, tgt[2]) # set target robot psi the same as the wheelchair
+        print(f"start plan for target: {self.tgt }")
+        self.tgt_idx = self._pos_to_ind(self.tgt)
         super().plan(tgt, disp_tol, rot_tol)
-        cfg = self._wheelchair_np_to_cfg(tgt)
+        cfg = self._wheelchair_np_to_cfg(self.tgt)
         # warm start the grid planner
         # gp = GridPlanner(self.world_fn, cfg, self.sl.r)
         # gp.get_dist(tgt)
@@ -134,13 +134,15 @@ class StateLatticePlanner(Planner):
             if abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol:
                 print("Arrived!")
                 raise StopIteration
-
         # gen config
+        if self.cfg_ind >= self.traj_w.shape[0]:
+            raise StopIteration
         res = self.get_target_config(self.traj_w[self.cfg_ind, :], self.traj_r[self.cfg_ind, :])
         if res != "success":
             print(f"fail to get target config due to {res}")
             raise StopIteration
         self.cfg_ind += 1
+        return self.get_configs()
         
     def get_target_config(self, w_np, r_np) -> List[float]:
         # print(f"gen config from w_np: {w_np} and r_np: {r_np}")
@@ -437,7 +439,7 @@ if __name__ == "__main__":
 
     dt = 1 / 50
     planner = StateLatticePlanner(sl, world_fn, dt)
-    planner.plan(np.array([0, -10, 0.0, 0.0]), 0.5, 0.5)
+    planner.plan(np.array([0, -10, 0.0]), 0.5, 0.5)
 
     iter = 0
     vis.add("world", world)
@@ -445,9 +447,9 @@ if __name__ == "__main__":
     while vis.shown():
         iter += 1
         try:
-            planner.next()
-            robot_model.setConfig(planner.robot_model.getConfig())
-            wheelchair_model.setConfig(planner.wheelchair_model.getConfig())
+            cfgs = planner.next()
+            robot_model.setConfig(cfgs[0])
+            wheelchair_model.setConfig(cfgs[1])
             time.sleep(dt)
         except StopIteration:
             print("Stopped at iteration ", iter)
