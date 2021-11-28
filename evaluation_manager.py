@@ -8,7 +8,7 @@ from tqdm import tqdm
 import numpy as np
 from evaluator import Evaluator
 from tracking_planner import TrackingPlannerInstance
-
+from state_lattice_planner import StateLatticePlanner, sl
 
 class EvaluationManager:
     def __init__(self, p_name: str, world_fn: str, goal: np.ndarray, cfg_fn: str):
@@ -74,6 +74,8 @@ class EvaluationManager:
         # TODO: Support other planner keys
         if p_name == "tracking":
             p = TrackingPlannerInstance(world_fn, self.eval_settings["dt"])
+        elif p_name == "state_lattice":
+            p = StateLatticePlanner(sl, world_fn, self.eval_settings["dt"])
         else:
             raise ValueError("Didn't recognize planner name: %s", p_name)
         e = Evaluator(p, world_fn)
