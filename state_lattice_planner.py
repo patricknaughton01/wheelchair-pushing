@@ -18,7 +18,7 @@ from tracker import mirror_arm_config
 cfg = Config("params/tw.yaml")
 sys = TWSys(cfg.value, seed = 0)
 sl = StateLattice(sys)
-sl.load("logs/sl.npy")
+sl.load("logs/sl_50.npy")
 
 class StateLatticePlanner(Planner):
     """Planning with state lattice
@@ -73,6 +73,7 @@ class StateLatticePlanner(Planner):
         self.open_d_map: Dict[Tuple[int, int, int, int], float] = {}
         self.traj = {}
         self.d = self.sl.sys.sets['d']
+        self.w = self.sl.sys.sets['w']
         print("Init SL Planner")
 
     def plan(self, tgt: np.ndarray, disp_tol: float, rot_tol: float):
@@ -88,11 +89,15 @@ class StateLatticePlanner(Planner):
         print(f"start plan for target: {self.tgt }")
         self.tgt_idx = self._pos_to_ind(self.tgt)
         super().plan(tgt, disp_tol, rot_tol)
-        cfg = self._wheelchair_np_to_cfg(self.tgt)
+
         # warm start the grid planner
-        # gp = GridPlanner(self.world_fn, cfg, self.sl.r)
-        # gp.get_dist(tgt)
-        # print("warm start initialization")
+        # tgt_cfg = self._wheelchair_np_to_cfg(self.tgt)
+        # gp = GridPlanner(self.world_fn, tgt_cfg, self.sl.r)
+        # start_pos_w = self.wheelchair_model.link(self.w_base_name).getTransform()[1]
+        # print(f"start pos w: {start_pos_w}")
+        # gp.get_dist(start_pos_w)
+        # print("warm start grid initialized")
+
         if self._collides_w(self.tgt):
             print("Tgt collides with obstacles!!!")
             self.close_set[self.tgt_idx] = float('inf')
@@ -111,11 +116,14 @@ class StateLatticePlanner(Planner):
                     cand_cost = suc_data['costs'][i] + min_dist + self._cost_obs(n_ind, min_ind, suc_data['states_r'][i][-1,:])
                     best_known_dist = self.open_d_map.get(n_ind, float('inf'))
                     if cand_cost < best_known_dist:
+                       
                         # euclidean heuristic
-                        heapq.heappush(self.open_set,(self.euclidean_heuristic(n_ind) + cand_cost, cand_cost, n_ind))
+                        heapq.heappush(self.open_set,(self.euclidean_heuristic(n_ind) * self.w + cand_cost, cand_cost, n_ind))
+                       
                         # Dijkstra heuristic
                         # n_pos = self._ind_to_pos(n_ind)
                         # heapq.heappush(self.open_set,(gp.get_dist(n_pos) + cand_cost, cand_cost, n_ind))
+                       
                         self.open_d_map[n_ind] = cand_cost
                         self.traj[n_ind] = {'prev': min_ind, 'state_w': suc_data['states_w'][i], 'state_r':suc_data['states_r'][i], 'action_taken': [orien_idx, i]}
         
@@ -211,11 +219,11 @@ class StateLatticePlanner(Planner):
     def retrive_traj(self):
         print("retrive trajectory")
         end = self.tgt_idx
-        nodes, states_w, states_r, action_taken = [self.tgt], [], [], []
+        nodes, states_w, states_r, action_taken = [self.tgt.tolist()], [], [], []
         while end != self.start_idx:
             prev = self.traj[end]['prev']
             prev_w_pose = self._ind_to_pos(prev)
-            nodes.insert(0,list(prev_w_pose))
+            nodes = np.insert(nodes, 0, prev_w_pose, axis = 0)
             states_w.insert(0,self.pos_l2g(prev_w_pose, self.traj[end]['state_w']))
             states_r.insert(0,self.pos_l2g(prev_w_pose, self.traj[end]['state_r']))
             action_taken.insert(0,self.traj[end]['action_taken'])
