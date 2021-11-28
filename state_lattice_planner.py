@@ -27,7 +27,7 @@ class StateLatticePlanner(Planner):
         super().__init__(world_fn, dt)
         with open(SETTINGS_PATH, "r") as f:
             self.settings = json.load(f)
-
+        self.sl = sl
         self.dt = dt
         self.left_name = "left_tool_link"
         self.right_name = "right_tool_link"
@@ -65,11 +65,11 @@ class StateLatticePlanner(Planner):
         self._ignore_collision_pairs()
         self._set_collision_margins()
         self.cfg_ind = 0
-
-        self.sl = sl
+        
         self.close_set: Dict[Tuple[int, int, int, int], float] = {}
-        self.start_idx = (0, 0, 3, 3)
-        self.open_set: List[Tuple[float, float, Tuple[int, int, int, int]]] = [(0,0,self.start_idx)] # start from the origin point
+        self.start_idx = self._pos_to_ind(self.T_ww_init[1][0:2] + [0, 0])
+        print(f"start idx: {self.start_idx}")
+        self.open_set: List[Tuple[float, float, Tuple[int, int, int, int]]] = [(0,0,self.start_idx)]
         self.open_d_map: Dict[Tuple[int, int, int, int], float] = {}
         self.traj = {}
         self.d = self.sl.sys.sets['d']
@@ -85,7 +85,7 @@ class StateLatticePlanner(Planner):
         Returns:
             list: [trajectory data]
         """
-        self.tgt = np.append(tgt, tgt[2]) # set target robot psi the same as the wheelchair
+        self.tgt = np.append(tgt, tgt[2])
         print(f"start plan for target: {self.tgt }")
         self.tgt_idx = self._pos_to_ind(self.tgt)
         super().plan(tgt, disp_tol, rot_tol)
@@ -138,13 +138,15 @@ class StateLatticePlanner(Planner):
             wheelchair_cfg[self.wheelchair_dofs[1]]
         ])
         wheelchair_yaw = wheelchair_cfg[self.wheelchair_dofs[2]]
-        if np.linalg.norm(wheelchair_xy - self.target[:2]) <= self.disp_tol:
-            if abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol:
+        if np.linalg.norm(wheelchair_xy - self.tgt[:2]) <= self.disp_tol:
+            if abs(so2.diff(wheelchair_yaw, self.tgt[2])) <= self.rot_tol:
                 print("Arrived!")
                 raise StopIteration
-        # gen config
+        
         if self.cfg_ind >= self.traj_w.shape[0]:
+            print("reached the end of the planned trajectory")
             raise StopIteration
+
         res = self.get_target_config(self.traj_w[self.cfg_ind, :], self.traj_r[self.cfg_ind, :])
         if res != "success":
             print(f"fail to get target config due to {res}")
@@ -219,7 +221,7 @@ class StateLatticePlanner(Planner):
     def retrive_traj(self):
         print("retrive trajectory")
         end = self.tgt_idx
-        nodes, states_w, states_r, action_taken = [self.tgt.tolist()], [], [], []
+        nodes, states_w, states_r, action_taken = [self.tgt], [], [], []
         while end != self.start_idx:
             prev = self.traj[end]['prev']
             prev_w_pose = self._ind_to_pos(prev)
@@ -229,8 +231,10 @@ class StateLatticePlanner(Planner):
             action_taken.insert(0,self.traj[end]['action_taken'])
             end = prev
         print(f"nodes count: {len(nodes)}")
-        self.traj_w = np.asarray(states_w).reshape(-1, 3)
-        self.traj_r = np.asarray(states_r).reshape(-1, 3)
+        # self.traj_w = np.asarray(states_w).reshape(-1, 3)
+        # self.traj_r = np.asarray(states_r).reshape(-1, 3)
+        self.traj_w = np.concatenate(([i for i in states_w]), axis=0)
+        self.traj_r =  np.concatenate(([i for i in states_r]), axis=0)
         return np.asarray(nodes), self.traj_w, self.traj_r, np.asarray(action_taken)
 
     # def _cost_obs(self, ind_w, ind_w_prev, pos_r_l) -> float:
@@ -374,13 +378,13 @@ class StateLatticePlanner(Planner):
     def _wheelchair_np_to_cfg(self, w_np: List[float]) -> List[float]:
         cfg = self.wheelchair_model.getConfig()
         for i, d in enumerate(self.wheelchair_dofs):
-            cfg[d] = w_np[i]  + self.T_ww_init[1][i] 
+            cfg[d] = w_np[i]  #+ self.T_ww_init[1][i] 
         return cfg
 
     def _robot_np_to_cfg(self, r_np: List[float]) -> List[float]:
         cfg = self.robot_model.getConfig()
         for i, d in enumerate(self.base_dofs):
-            cfg[d] = r_np[i] + self.T_rw_init[1][i]   # need to consider the initial pose of the robot
+            cfg[d] = r_np[i] +  self.T_ww_init[1][i]   # need to consider the initial pose of the robot
         return cfg
 
     def _get_t_hee(self) -> tuple:
@@ -408,10 +412,9 @@ class StateLatticePlanner(Planner):
         self.set_arm_cfg('l', l_cfg)
         self.set_arm_cfg('r', r_cfg)
 
-        self.T_ww_init = se3.inv(self.wheelchair_model.link(self.w_base_name).getTransform())
-        self.T_rw_init = se3.inv(self.robot_model.link(self.base_name).getTransform())
-        print(f"w world trans: {self.T_ww_init}")
-        print(f"r world trans: {self.T_rw_init}")
+        self.T_ww_init = self.wheelchair_model.link(self.w_base_name).getTransform()
+        # self.T_rw_init = se3.inv(self.robot_model.link(self.base_name).getTransform())
+        print(f"wheelchair base to world trans: {self.T_ww_init}")
         self.init_configs = self.get_configs()
         print(f"cache init configs: {self.init_configs}")
 
@@ -460,5 +463,6 @@ if __name__ == "__main__":
             wheelchair_model.setConfig(cfgs[1])
             time.sleep(dt)
         except StopIteration:
+            print(f"reached config: {cfgs}")
             print("Stopped at iteration ", iter)
             break
