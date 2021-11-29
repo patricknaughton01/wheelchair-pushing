@@ -98,8 +98,8 @@ class Evaluator:
             w_t_vel = vo.div(vo.sub(wbc2[:2], wbc1[:2]), self.p.dt)
             w_r_vel = so2.diff(wbc2[2], wbc1[2]) / self.p.dt
             if i > 0:
-                wheelchair_t_accel += vo.norm(vo.sub(w_t_vel, last_w_t_vel))
-                wheelchair_r_accel += abs(w_r_vel - last_w_r_vel)
+                wheelchair_t_accel += vo.norm(vo.sub(w_t_vel, last_w_t_vel))**2
+                wheelchair_r_accel += abs(w_r_vel - last_w_r_vel)**2
             last_w_t_vel = w_t_vel
             last_w_r_vel = w_r_vel
         self.stats["trina_cfg_dist"] = trina_cfg_dist
@@ -108,8 +108,8 @@ class Evaluator:
         self.stats["trina_strafe_dist"] = trina_strafe_dist
         self.stats["wheelchair_t_dist"] = wheelchair_t_dist
         self.stats["wheelchair_r_dist"] = wheelchair_r_dist
-        self.stats["wheelchair_t_accel"] = wheelchair_t_accel
-        self.stats["wheelchair_r_accel"] = wheelchair_r_accel
+        self.stats["wheelchair_t_accel_sq"] = wheelchair_t_accel
+        self.stats["wheelchair_r_accel_sq"] = wheelchair_r_accel
 
 
 if __name__ == "__main__":
