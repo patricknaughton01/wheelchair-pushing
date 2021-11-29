@@ -5,3 +5,4 @@ corridor_res.json
 dump_stats.py
 .ipynb_checkpoints
 logs
+tmp/

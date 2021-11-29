@@ -6,7 +6,7 @@
         translation="1 0 0">
     </robot>
     <terrain file="terrains/cube.off" scale="100.0 100.0 0.01" translation="-50 -50 -0.01" name="floor">
-        <display color="0.8 0.8 0.8"/>
+        <display color="0.0 0.0 1.0"/>
     </terrain>
     <terrain file="terrains/cube.off" scale="21 1 1" translation="-5 -3.0 0.0">
         <display color="0.5 0.3 0.2"/>
