@@ -9,6 +9,18 @@
     "planners": ["tracking", "state_lattice"],
     "tests":[
         {
+            "world_fn": "Model/worlds/world_long_turn.xml",
+            "goals": [
+                [0, -10, 180]
+            ]
+        },
+        {
+            "world_fn": "Model/worlds/world_short_turn.xml",
+            "goals": [
+                [0, -10, 0]
+            ]
+        },
+        {
             "world_fn": "Model/worlds/world_corridor.xml",
             "goals": [
                 [0, -10, 0]
@@ -17,10 +29,7 @@
         {
             "world_fn": "Model/worlds/TRINA_world_cholera.xml",
             "goals": [
-                [10, 0, 0],
-                [10, 0, 90],
-                [10, 0, 180],
-                [10, 0, 270]
+                [10, 0, 180]
             ]
         }
     ]
