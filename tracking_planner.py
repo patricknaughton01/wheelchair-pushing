@@ -1,21 +1,13 @@
 import json
-import os
-from pathlib import Path
 from typing import List, Tuple
-import argparse
 
 from klampt.math import so2
-from klampt.vis.glprogram import GLViewport
 from consts import SETTINGS_PATH
 from planner import Planner
 import numpy as np
 import klampt
 from grid_planner import GridPlanner
 from tracker import Tracker
-from threading import Thread
-import time
-from klampt import vis
-import cv2
 
 
 class TrackingPlannerInstance(Planner):
