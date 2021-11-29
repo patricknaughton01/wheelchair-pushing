@@ -6,7 +6,8 @@ system:
 
 space_sets:
     u_min: [0,0]
-    u_max: [2,2]
+    # u_min: [-1.5,-1.5]
+    u_max: [1.5,1.5]
     state_min: [-.inf, -.inf, -3.1415927]
     state_max: [.inf, .inf, 3.1415927]
     idx: [0,1,2]
@@ -15,8 +16,8 @@ space_sets:
     w: 3 # weighted A*
 
 trajOpt:
-    N: 20
-    h: 0.1
+    N: 100
+    h: 0.02
     Q:
         [
             [1, 0, 0],
@@ -26,8 +27,8 @@ trajOpt:
         ]
     R:
         [
-            [0.1, 0],
-            [0, 0.1],
+            [0.01, 0],
+            [0, 0.01],
         ]
 
     Q_R:
