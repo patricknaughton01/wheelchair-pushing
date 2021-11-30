@@ -12,6 +12,7 @@ from klampt.vis.glprogram import GLViewport
 from planner import Planner
 
 from tracking_planner import TrackingPlannerInstance
+from state_lattice_planner import StateLatticePlanner, sl
 
 running_flag = True
 sim_running_flag = True
@@ -20,7 +21,7 @@ sim_running_flag = True
 def main():
     global running_flag, sim_running_flag
     parser = argparse.ArgumentParser(description="Test the tracking planner")
-    parser.add_argument("type", type=str, choices=["tracking"],
+    parser.add_argument("type", type=str, choices=["tracking", "state_lattice"],
         help="which planner to use")
     parser.add_argument("-s", action="store_true",
         help="save frames from the simulation")
@@ -31,6 +32,8 @@ def main():
     dt = 1 / 50
     if args["type"] == "tracking":
         planner = TrackingPlannerInstance(world_fn, dt)
+    elif args["type"] == "state_lattice":
+        planner = StateLatticePlanner(sl, world_fn, dt)
     else:
         raise ValueError("Unknown planner type")
     planner.plan(np.array([0.0, -10.0, 0.0]), 0.5, 0.5)
