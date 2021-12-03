@@ -64,22 +64,19 @@ class StateLattice:
                     success = opt.step(stateCurrent = self.idx2pos(x_cur_idx), stateTarget = self.idx2pos(x_tgt_idx), interpolation=False, initMethod = 'linear')
                     if success:
                         tgts.append(x_tgt_idx)
-                        opt.state_sol, opt.robot_state_sol = np.round(opt.state_sol,2), np.round(opt.robot_state_sol,2)
-                        opt_costs = np.round(opt.c1_value + opt.c2_value + opt.c3_value,2)
                         # cut SL based on control input
-                        cut_idx = self.get_cut_idx(opt.ctrl_sol)
+                        cut_idx = self.get_cut_idx(opt.ctrl_sol, opt.robot_state_sol)
                         states_w.append(np.delete(opt.state_sol, np.s_[cut_idx:-1], 0))
                         ctrls_w.append(np.delete(opt.ctrl_sol, np.s_[cut_idx:-1], 0))
                         states_r.append(np.delete(opt.robot_state_sol, np.s_[cut_idx:-1], 0))
-                        costs.append(np.delete(opt_costs, np.s_[cut_idx:-1], 0))
-                        # print(opt.cost_value)
-                # self.update_data(states_wi, ctrls_wi, states_ri, costs_i)
+                        costs.append([opt.c1_value, opt.c2_value, opt.c3_value])
+                        # costs.append(np.delete(opt_costs, np.s_[cut_idx:-1], 0))
             self.data.update({x_cur_idx: {'targets': tgts, 'states_w': states_w, 'ctrls_w': ctrls_w, 'states_r': states_r, 'costs': costs}})
         print(f"generated {len(tgts)} primitives!")
 
-    def get_cut_idx(self, ctrls):
+    def get_cut_idx(self, ctrls, state_r):
         for i in range(1, ctrls.shape[0]):
-            if (ctrls[i,:]< 1e-2).all() and (ctrls[i,:]> -1e-2).all():
+            if (ctrls[i,:]< 1e-2).all() and (ctrls[i,:]> -1e-2).all(): # and np.linalg.norm(state_r[i,:]-state_r[-1,:]) < 0.05:
                 # print(f"cut at: {i}")
                 return i
         return ctrls.shape[0]
@@ -172,7 +169,7 @@ class StateLattice:
             ndarray: transformed state
         """
         state = np.array(state)
-        xy = self.trans_xy(state[:, 0:2], R)
+        xy = np.round(self.trans_xy(state[:, 0:2], R),0) # not sure why only round works
         psi = (state[:, 2:] + psi_idx_inc) % 8
         return np.concatenate((xy,psi), axis = 1).astype(int)
 
@@ -186,7 +183,7 @@ class StateLattice:
         Returns:
             [ndarray]: [rotated xy]
         """
-        return np.round(np.dot(R, xy.T).T,2)
+        return np.dot(R, xy.T).T
 
     def trans_psi(self, psi, psi_idx_inc):
         """transform psi
@@ -199,7 +196,7 @@ class StateLattice:
             [ndarray]: transformed psi
         """
         # return (np.asarray(psi) + psi_idx_inc) % 8
-        delta_psi = -psi_idx_inc * np.pi/4
+        delta_psi = -psi_idx_inc * self.delta_psi
         for i in range(psi.shape[0]):
             for j in range(psi.shape[1]):
                 psi[i,j] = diff_angle(psi[i,j], delta_psi)
@@ -273,6 +270,8 @@ class StateLattice:
             axs.plot(data['states_w'][i][0,0],data['states_w'][i][0,1], marker = '>', color = 'darkblue')  
             axs.plot(data['states_r'][i][0,0],data['states_r'][i][0,1], marker = '>', color = 'red') 
             axs.plot(data['states_w'][i][-1,0],data['states_w'][i][-1,1], marker = 'o', color = 'g')
+            # axs.plot(data['targets'][i][0],data['targets'][i][1], marker = 'o', color = 'g')
+
             if plot_idx:
                 axs.text(data['states_w'][i][data['states_w'][i].shape[0]//2,0] + 0.1*(i%3 - 1 ), data['states_w'][i][data['states_w'][i].shape[0]//2,1], f"{i},",  fontsize = 10)#bbox=dict(fill=False, edgecolor='red', linewidth=2)
             if plot_cost:
@@ -286,5 +285,8 @@ class StateLattice:
         if label:
             axs.plot(data['states_w'][-1][0,0], data['states_w'][-1][0,1], linestyle = '-', marker = '', color = 'blue', label = "wheelchair")  
             axs.plot(data['states_r'][-1][0,0], data['states_r'][-1][0,1], linestyle = '-', marker = '', color = "orange", label = "robot") 
+            axs.plot(data['states_w'][0][0,0],data['states_w'][0][0,1], marker = '>', linestyle = '', color = 'darkblue', label="start")  
+            # axs.plot(data['states_r'][0][0,0],data['states_r'][0][0,1], marker = '>', linestyle = '', color = 'red', label = "start") 
+            axs.plot(data['states_w'][0][-1,0],data['states_w'][0][-1,1], marker = 'o', linestyle = '', color = 'g', label="goal")
             # print(f"keys: {keys}")
         axs.legend(ncol=6,loc='upper left')
