@@ -11,7 +11,8 @@ class TrajOpt:
         self.Q = np.array(self.sys.optParam['Q'])
         self.R = np.array(self.sys.optParam['R'])
         self.Q_R = np.array(self.sys.optParam['Q_R'])
-        self.d = self.sys.sets['d']
+        self.d_const = self.sys.sets['d_const']
+        self.psi_const = self.sys.sets['psi_const']
         self.sys.sets['state_min'][2] = -np.pi
         self.sys.sets['state_max'][2] = np.pi
 
@@ -70,17 +71,11 @@ class TrajOpt:
             obj +=  (ca.mtimes([(self.robot_state[i, :]-self.opt_xrs.T), self.Q_R*gau_weight[i], (self.robot_state[i, :]-self.opt_xrs.T).T]))
             obj +=  (ca.mtimes([(self.robot_state[i+1, :]-self.robot_state[i, :]), self.Q_R * 10 , (self.robot_state[i+1, :]-self.robot_state[i, :]).T]))
             # obj +=  ca.mtimes([(self.robot_state[i, 2]-self.opt_states[i, 2]), 1, (self.robot_state[i, 2]-self.opt_states[i, 2])])
-
-            # obj += (ca.mtimes([(self.robot_state[i, 2]-self.opt_xrs[2]), self.Q_R[2,2]*gau_weight[i], (self.robot_state[i, 2]-self.opt_xrs[2])]))
         
         for i in range(self.N-1):
             c1 += ca.sqrt(ca.mtimes([(self.opt_states[i+1, :2]-self.opt_states[i, :2]), np.identity(2), (self.opt_states[i+1, :2]-self.opt_states[i, :2]).T]))
             c2 += ca.sqrt(ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), np.identity(2), (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
             c3 += ca.sqrt(ca.mtimes([(self.robot_state[i, 2]-self.opt_states[i, 2]), 1, (self.robot_state[i, 2]-self.opt_states[i, 2])]))
-            # cost = ca.mtimes([self.opt_controls[i, :], self.R*100, self.opt_controls[i, :].T])
-            
-            # cost += 0.05*ca.fabs(self.opt_states[i, 2]-self.robot_state[i, 2])
-            # cost +=  ca.mtimes([self.opt_controls[i, :], self.R, self.opt_controls[i, :].T])
         return obj, c1, c2, c3
 
     def getConstraints(self):
@@ -101,13 +96,13 @@ class TrajOpt:
         for i in range(self.sys.obs_dim): 
             ceq.extend([(self.robot_state[0, i] == self.opt_xr0[i])]) 
             ceq.extend([(self.robot_state[-1, i] == self.opt_xrs[i])]) 
-        ceq.append(self.opti.bounded(-0.55, self.opt_states[:, 2] - self.robot_state[:, 2], 0.55))
+        ceq.append(self.opti.bounded(-self.psi_const, self.opt_states[:, 2] - self.robot_state[:, 2], self.psi_const))
         
         slack_d = 0.2
         if self.sys.sets['u_min'][0] == 0: # not work for pure turning case, need to get rid of it by checking u_min
             for i in range(1, self.N - 1):
                 rw_dist_i = ca.norm_2(self.opt_states[i, 0:2] - self.robot_state[i, 0:2])
-                ceq.append(self.opti.bounded(self.d, rw_dist_i, self.d + slack_d))
+                ceq.append(self.opti.bounded(self.d_const, rw_dist_i, self.d_const + slack_d))
         return ceq
 
     def getCollocationConstraints(self,state1,state2,model,h):
@@ -200,15 +195,12 @@ class TrajOpt:
         self.opti.set_value(self.opt_x0, stateCurrent[0:3])
         self.opti.set_value(self.opt_xs, stateTarget[0:3])
 
-        # robot_state_cur = [self.opt_x0[0] - self.d*np.cos(stateCurrent[3]), self.opt_x0[1] - self.d*np.sin(stateCurrent[3]), stateCurrent[3] ]
-        # self.opti.set_value(self.opt_xr0, robot_state_cur)
-
-        self.opti.set_value(self.opt_xr0[0], (stateCurrent[0]- self.d*np.cos(stateCurrent[3])))
-        self.opti.set_value(self.opt_xr0[1], (stateCurrent[1] - self.d*np.sin(stateCurrent[3])))
+        self.opti.set_value(self.opt_xr0[0], (stateCurrent[0]- self.d_const*np.cos(stateCurrent[3])))
+        self.opti.set_value(self.opt_xr0[1], (stateCurrent[1] - self.d_const*np.sin(stateCurrent[3])))
         self.opti.set_value(self.opt_xr0[2], stateCurrent[3])
 
-        self.opti.set_value(self.opt_xrs[0], stateTarget[0] - self.d*np.cos(stateTarget[3]))
-        self.opti.set_value(self.opt_xrs[1], stateTarget[1] - self.d*np.sin(stateTarget[3]))
+        self.opti.set_value(self.opt_xrs[0], stateTarget[0] - self.d_const*np.cos(stateTarget[3]))
+        self.opti.set_value(self.opt_xrs[1], stateTarget[1] - self.d_const*np.sin(stateTarget[3]))
         self.opti.set_value(self.opt_xrs[2], stateTarget[3])
 
         # print("target state: ", self.opti.value(self.opt_xs))
