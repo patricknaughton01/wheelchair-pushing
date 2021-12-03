@@ -1,5 +1,7 @@
 import numpy as np
 import casadi as ca
+from scipy import signal
+
 class TrajOpt:
     def __init__(self, sys, mode = 'TT', N = None):
         self.sys = sys
@@ -20,13 +22,13 @@ class TrajOpt:
         self.opti.set_initial(self.robot_state, np.zeros((self.N, 3)))
 
         self.state_guess = np.zeros((self.N, self.sys.obs_dim))
-        self.ctrl_guess = np.zeros((self.N, self.sys.ctrl_dim))
-        # self.ctrl_guess = np.ones((self.N, self.sys.ctrl_dim)) * self.sys.sets['u_max'][0]
+        # self.ctrl_guess = np.zeros((self.N, self.sys.ctrl_dim))
+        self.ctrl_guess = np.ones((self.N, self.sys.ctrl_dim)) * self.sys.sets['u_max'][0]
         
         self.opt_x0 =  self.opti.parameter(self.sys.obs_dim)
         self.opt_xs =  self.opti.parameter(self.sys.obs_dim)
-        self.opt_psi0 =  self.opti.parameter(1)
-        self.opt_psis =  self.opti.parameter(1)
+        self.opt_xr0 =  self.opti.parameter(self.sys.obs_dim)
+        self.opt_xrs =  self.opti.parameter(self.sys.obs_dim)
 
         self.tgt_traj =  self.opti.parameter(self.N, self.sys.obs_dim)
 
@@ -58,24 +60,27 @@ class TrajOpt:
         return: objective expression
         """
         obj, c1, c2, c3 = 0, 0, 0, 0
-        for i in range(self.N-1):
-            obj +=  (ca.mtimes([(self.opt_states[i, :]-self.opt_xs.T), self.Q, (self.opt_states[i, :]-self.opt_xs.T).T]))
-            # obj +=   (ca.mtimes([self.opt_controls[i, :], self.R, self.opt_controls[i, :].T])) # minimize control
-            obj +=   (ca.mtimes([(self.opt_controls[i+1, :] - self.opt_controls[i, :]), self.R, (self.opt_controls[i+1, :] - self.opt_controls[i, :]).T]))   # smooth control
-            obj +=  (ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), self.Q_R[:2,:2] , (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
-            obj += (ca.mtimes([(self.robot_state[i, 2]-self.opt_psis), self.Q_R[2,2], (self.robot_state[i, 2]-self.opt_psis)]))
-        
-        obj +=  (ca.mtimes([(self.opt_states[-1, :]-self.opt_xs.T), self.Q, (self.opt_states[-1, :]-self.opt_xs.T).T]))
+        gau_weight = signal.gaussian(self.N*2, std=self.N//4)
 
         for i in range(self.N-1):
-            c1 += ca.sqrt(ca.mtimes([(self.opt_states[i+1, :2]-self.opt_states[i, :2]), self.Q[:2,:2], (self.opt_states[i+1, :2]-self.opt_states[i, :2]).T]))
-            c2 += ca.sqrt(ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), self.Q_R[:2,:2], (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
-            c3 += ca.sqrt(ca.mtimes([(self.robot_state[i, 2]-self.opt_states[i, 2]), self.Q_R[2,2], (self.robot_state[i, 2]-self.opt_states[i, 2])]))
+            obj +=  (ca.mtimes([(self.opt_states[i, :]-self.opt_xs.T), self.Q*gau_weight[i], (self.opt_states[i, :]-self.opt_xs.T).T]))
+            obj +=  (ca.mtimes([(self.opt_states[i+1, :]-self.opt_states[i, :]), self.Q , (self.opt_states[i+1, :]-self.opt_states[i, :]).T]))
+            # obj +=   (ca.mtimes([self.opt_controls[i, :], self.R, self.opt_controls[i, :].T])) # minimize control
+            obj +=   (ca.mtimes([(self.opt_controls[i+1, :] - self.opt_controls[i, :]), self.R, (self.opt_controls[i+1, :] - self.opt_controls[i, :]).T]))   # smooth control
+            obj +=  (ca.mtimes([(self.robot_state[i, :]-self.opt_xrs.T), self.Q_R*gau_weight[i], (self.robot_state[i, :]-self.opt_xrs.T).T]))
+            obj +=  (ca.mtimes([(self.robot_state[i+1, :]-self.robot_state[i, :]), self.Q_R * 10 , (self.robot_state[i+1, :]-self.robot_state[i, :]).T]))
+            # obj +=  ca.mtimes([(self.robot_state[i, 2]-self.opt_states[i, 2]), 1, (self.robot_state[i, 2]-self.opt_states[i, 2])])
+
+            # obj += (ca.mtimes([(self.robot_state[i, 2]-self.opt_xrs[2]), self.Q_R[2,2]*gau_weight[i], (self.robot_state[i, 2]-self.opt_xrs[2])]))
+        
+        for i in range(self.N-1):
+            c1 += ca.sqrt(ca.mtimes([(self.opt_states[i+1, :2]-self.opt_states[i, :2]), np.identity(2), (self.opt_states[i+1, :2]-self.opt_states[i, :2]).T]))
+            c2 += ca.sqrt(ca.mtimes([(self.robot_state[i+1, :2]-self.robot_state[i, :2]), np.identity(2), (self.robot_state[i+1, :2]-self.robot_state[i, :2]).T]))
+            c3 += ca.sqrt(ca.mtimes([(self.robot_state[i, 2]-self.opt_states[i, 2]), 1, (self.robot_state[i, 2]-self.opt_states[i, 2])]))
             # cost = ca.mtimes([self.opt_controls[i, :], self.R*100, self.opt_controls[i, :].T])
             
             # cost += 0.05*ca.fabs(self.opt_states[i, 2]-self.robot_state[i, 2])
             # cost +=  ca.mtimes([self.opt_controls[i, :], self.R, self.opt_controls[i, :].T])
-        # obj += (ca.mtimes([(self.opt_states[self.N-1, :]-self.opt_xs.T), self.Q_N, (self.opt_states[self.N-1, :]-self.opt_xs.T).T]))
         return obj, c1, c2, c3
 
     def getConstraints(self):
@@ -93,15 +98,16 @@ class TrajOpt:
 
     def getTWConstraints(self):
         ceq = []
-        ceq.append(self.robot_state[-1, 2] == self.opt_psis)
-        ceq.append(self.robot_state[0, 2] == self.opt_psi0)
-        ceq.append(self.robot_state[-1, 0] == self.opt_states[-1, 0] - self.d*np.cos(self.robot_state[-1, 2]))
-        ceq.append(self.robot_state[-1, 1] == self.opt_states[-1, 1] - self.d*np.sin(self.robot_state[-1, 2]))
-        ceq.append(self.robot_state[0, 0] == self.opt_states[0, 0] - self.d*np.cos(self.robot_state[0, 2]))
-        ceq.append(self.robot_state[0, 1] == self.opt_states[0, 1] - self.d*np.sin(self.robot_state[0, 2]))
-        ceq.append(self.opti.bounded(-1, self.opt_states[:, 2] - self.robot_state[:, 2], 1))
-        slack_d2 = (self.d * 1.2 )**2
-        ceq.append(self.opti.bounded(-slack_d2, (self.opt_states[:, 0] - self.robot_state[:, 0])**2 + (self.opt_states[:, 1] - self.robot_state[:, 1])**2, slack_d2))
+        for i in range(self.sys.obs_dim): 
+            ceq.extend([(self.robot_state[0, i] == self.opt_xr0[i])]) 
+            ceq.extend([(self.robot_state[-1, i] == self.opt_xrs[i])]) 
+        ceq.append(self.opti.bounded(-0.55, self.opt_states[:, 2] - self.robot_state[:, 2], 0.55))
+        
+        slack_d = 0.2
+        if self.sys.sets['u_min'][0] == 0: # not work for pure turning case, need to get rid of it by checking u_min
+            for i in range(1, self.N - 1):
+                rw_dist_i = ca.norm_2(self.opt_states[i, 0:2] - self.robot_state[i, 0:2])
+                ceq.append(self.opti.bounded(self.d, rw_dist_i, self.d + slack_d))
         return ceq
 
     def getCollocationConstraints(self,state1,state2,model,h):
@@ -193,8 +199,17 @@ class TrajOpt:
 
         self.opti.set_value(self.opt_x0, stateCurrent[0:3])
         self.opti.set_value(self.opt_xs, stateTarget[0:3])
-        self.opti.set_value(self.opt_psi0, stateCurrent[3])
-        self.opti.set_value(self.opt_psis, stateTarget[3])
+
+        # robot_state_cur = [self.opt_x0[0] - self.d*np.cos(stateCurrent[3]), self.opt_x0[1] - self.d*np.sin(stateCurrent[3]), stateCurrent[3] ]
+        # self.opti.set_value(self.opt_xr0, robot_state_cur)
+
+        self.opti.set_value(self.opt_xr0[0], (stateCurrent[0]- self.d*np.cos(stateCurrent[3])))
+        self.opti.set_value(self.opt_xr0[1], (stateCurrent[1] - self.d*np.sin(stateCurrent[3])))
+        self.opti.set_value(self.opt_xr0[2], stateCurrent[3])
+
+        self.opti.set_value(self.opt_xrs[0], stateTarget[0] - self.d*np.cos(stateTarget[3]))
+        self.opti.set_value(self.opt_xrs[1], stateTarget[1] - self.d*np.sin(stateTarget[3]))
+        self.opti.set_value(self.opt_xrs[2], stateTarget[3])
 
         # print("target state: ", self.opti.value(self.opt_xs))
         if stateGuess == []:
