@@ -18,7 +18,7 @@ from tracker import mirror_arm_config
 cfg = Config("params/tw.yaml")
 sys = TWSys(cfg.value, seed = 0)
 sl = StateLattice(sys)
-sl.load("logs/sl_50.npy")
+sl.load("logs/sl.npy")
 
 class StateLatticePlanner(Planner):
     """Planning with state lattice
@@ -72,7 +72,7 @@ class StateLatticePlanner(Planner):
         self.open_set: List[Tuple[float, float, Tuple[int, int, int, int]]] = [(0,0,self.start_idx)]
         self.open_d_map: Dict[Tuple[int, int, int, int], float] = {}
         self.traj = {}
-        self.d = self.sl.sys.sets['d']
+        self.d_const = self.sl.sys.sets['d_const']
         self.w = self.sl.sys.sets['w']
         print("Init SL Planner")
 
@@ -113,14 +113,20 @@ class StateLatticePlanner(Planner):
                     if n_ind in self.close_set:
                         continue
                     # print(f"suc_data['states_r'][i][-1,:]: {suc_data['states_r'][i][-1,:]}")
-                    cand_cost = suc_data['costs'][i] + min_dist + self._cost_obs(n_ind, min_ind, suc_data['states_r'][i][-1,:])
+                    # The params are hard to tune..., but this seems work ok
+                    # distance traveled of wheelchair/robot as well as heading difference between them
+                    mp_cost = suc_data['costs'][i][0] * self.sl.cost_weight[0]\
+                            + suc_data['costs'][i][1] * self.sl.cost_weight[1]\
+                            + suc_data['costs'][i][2] * self.sl.cost_weight[2]\
+                            + np.absolute(n_ind[2]-min_ind[2]) * self.sl.cost_weight[2] 
+                    cand_cost = mp_cost + min_dist + self._cost_obs(n_ind, min_ind, suc_data['states_r'][i][-1,:])
                     best_known_dist = self.open_d_map.get(n_ind, float('inf'))
                     if cand_cost < best_known_dist:
                        
                         # euclidean heuristic
                         heapq.heappush(self.open_set,(self.euclidean_heuristic(n_ind) * self.w + cand_cost, cand_cost, n_ind))
                        
-                        # Dijkstra heuristic
+                        # Dijkstra heuristic (doesn't work very well)
                         # n_pos = self._ind_to_pos(n_ind)
                         # heapq.heappush(self.open_set,(gp.get_dist(n_pos) + cand_cost, cand_cost, n_ind))
                        
@@ -289,8 +295,8 @@ class StateLatticePlanner(Planner):
             list: robot state
         """
         cur_r_pose = [0,0,cur_w_pose[3]]
-        cur_r_pose[0] = cur_w_pose[0] - self.d*np.cos(cur_w_pose[3])
-        cur_r_pose[1] = cur_w_pose[1] - self.d*np.sin(cur_w_pose[3])
+        cur_r_pose[0] = cur_w_pose[0] - self.d_const*np.cos(cur_w_pose[3])
+        cur_r_pose[1] = cur_w_pose[1] - self.d_const*np.sin(cur_w_pose[3])
         return cur_r_pose
         
     def euclidean_heuristic(self, node):
@@ -303,7 +309,7 @@ class StateLatticePlanner(Planner):
 
     def _pos_to_ind(self, pos: List) -> Tuple[int, int, int, int]:
         return (int(pos[0] // self.sl.r), int(pos[1] // self.sl.r), \
-                int((pos[2] / self.sl.delta_psi + 3)%8), int((pos[3] / self.sl.delta_psi + 3)%8))
+                int((pos[2] / self.sl.delta_psi + 3)%8), int((pos[3]-pos[2])/self.sl.delta_psi))
 
     def _ind_to_pos(self, ind: Tuple[int, int, int, int]) -> np.ndarray:
         return self.sl.idx2pos(ind)
