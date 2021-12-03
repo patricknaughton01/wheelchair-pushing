@@ -9,11 +9,12 @@ class StateLattice:
     """
     def __init__(self, sys):
         """Init with system and optimization parameters 
-        # node: (x, y, psi_w, psi_r), notice that psi_w is global index, while psi_r is relative index compare to psi_w, cos they have different resolution
-        # edge: computed by solving 2 points boundary problem for 0 and pi/4 directions
-        # psi idx:                          0,          1,        2,        3,   4,        5       , 6       7
-        # data: rotated SL in 8 direction: [-np.pi*3/4, -np.pi/2, -np.pi/4, 0, np.pi/4, np.pi/2, np.pi*3/4, np.pi]
-        # delta_psi(np.pi/6), differece btw robot and wheelchair
+        node: (x, y, psi_w, psi_r), notice that psi_w is global index, while psi_r is relative index compare to psi_w, cos they have different resolution
+        edge: computed by solving 2 points boundary problem 
+        psi_w idx (absolute) is in:      [   0,          1,        2,        3,   4,        5       , 6       7]
+        data: rotated SL in 8 direction: [-np.pi*3/4, -np.pi/2, -np.pi/4, 0, np.pi/4, np.pi/2, np.pi*3/4, np.pi]
+        psi_r idx (relative) is in: [-1,0,1]
+        delta_psi: differece btw robot and wheelchair
         Args:
             sys ([System]): system and optimization parameters
         """
@@ -22,12 +23,12 @@ class StateLattice:
         self.delta_psi = np.pi/6
         self.data = {}
         self.psi_set = np.linspace(-np.pi*3/4, np.pi, 8)
-        self.psi_r_set = np.linspace(-self.delta_psi, self.delta_psi, 3)
 
         self.x_curs_axis_idx = [(0,0,3,-1),(0,0,3,0),(0,0,3,1)]
         self.x_curs_diag_idx = [(0,0,4,-1),(0,0,4,0),(0,0,4,1)]
         self.cur_idx = [self.x_curs_axis_idx, self.x_curs_diag_idx]
         
+        # refer https://motion.cs.illinois.edu/RoboticSystems/PlanningWithDynamicsAndUncertainty.html
         self.axis_idx = [[0, 0, 2], [0, 0, 4], 
                          [1, 1, 5], [2, 2, 4], [2, 1, 3], [2, 1,  4], [2, 0, 4], 
                          [1, 0, 3], 
@@ -73,11 +74,19 @@ class StateLattice:
                         ctrls_w.append(np.delete(opt.ctrl_sol, np.s_[cut_idx:-1], 0))
                         states_r.append(np.delete(opt.robot_state_sol, np.s_[cut_idx:-1], 0))
                         costs.append([opt.c1_value, opt.c2_value, opt.c3_value])
-                        # costs.append(np.delete(opt_costs, np.s_[cut_idx:-1], 0))
             self.data.update({x_cur_idx: {'targets': tgts, 'states_w': states_w, 'ctrls_w': ctrls_w, 'states_r': states_r, 'costs': costs}})
         print(f"generated {len(tgts)} primitives!")
 
     def get_cut_idx(self, ctrls, state_r):
+        """generate the index for shrink primitives based on control effort
+
+        Args:
+            ctrls ([ndarray]): [control output from optimizer]
+            state_r ([ndarray]): [robot state from optimizer, not necessary here currently]
+
+        Returns:
+            [int]: [cut index]
+        """
         for i in range(1, ctrls.shape[0]):
             if (ctrls[i,:]< 1e-2).all() and (ctrls[i,:]> -1e-2).all(): # and np.linalg.norm(state_r[i,:]-state_r[-1,:]) < 0.05:
                 # print(f"cut at: {i}")
@@ -174,7 +183,7 @@ class StateLattice:
         state = np.array(state)
         xy = np.round(self.trans_xy(state[:, 0:2], R),0) # not sure why only round works
         psi = np.reshape((state[:, 2] + psi_idx_inc) % 8, (-1,1))
-        psi_r = np.reshape(state[:, 3], (-1,1))
+        psi_r = np.reshape(state[:, 3], (-1,1)) # no need to change relative idx
         return np.concatenate((xy,psi, psi_r), axis = 1).astype(int)
 
     def trans_xy(self, xy, R):
@@ -278,8 +287,9 @@ class StateLattice:
 
             if plot_idx:
                 axs.text(data['states_w'][i][data['states_w'][i].shape[0]//2,0] + 0.1*(i%3 - 1 ), data['states_w'][i][data['states_w'][i].shape[0]//2,1], f"{i},",  fontsize = 10)#bbox=dict(fill=False, edgecolor='red', linewidth=2)
-            if plot_cost:
-                axs.text(data['states_w'][i][data['states_w'][i].shape[0]//2,0], data['states_w'][i][data['states_w'][i].shape[0]//2,1]+0.05*(r_orien_idx-1), "{:.2f}".format(data['costs'][i][0]*self.cost_weight[0] + data['costs'][i][1]*self.cost_weight[1] + data['costs'][i][2]*self.cost_weight[2]))#bbox=dict(fill=False, edgecolor='red', linewidth=2)
+            if plot_cost and i%3 == 1:
+                axs.text(data['states_w'][i][data['states_w'][i].shape[0]//2,0], data['states_w'][i][data['states_w'][i].shape[0]//2,1]+0.05*(r_orien_idx-1), \
+                "{:.2f}".format(data['costs'][i][0]*self.cost_weight[0] + data['costs'][i][1]*self.cost_weight[1] + data['costs'][i][2]*self.cost_weight[2]))#bbox=dict(fill=False, edgecolor='red', linewidth=2)
             if plot_dir:
                 # if np.tan(data['states_r'][i].obs[-1,2])<5 and np.tan(data['states_r'][i][-1,2])>-5:
                     # axs.arrow(data['states_r'][i][-1,0], data['states_r'][i][-1,1], 0.1, np.tan(data['states_r'][i][-1,2])*0.1, head_width=0.05, head_length=0.05 , fc='yellow', ec='grey') 

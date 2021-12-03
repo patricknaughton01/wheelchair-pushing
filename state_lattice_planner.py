@@ -14,7 +14,7 @@ from klampt.model import ik, collide
 from grid_planner import GridPlanner
 from tracker import mirror_arm_config
 
-# load state lattice logs
+# load state lattice from log
 cfg = Config("params/tw.yaml")
 sys = TWSys(cfg.value, seed = 0)
 sl = StateLattice(sys)
@@ -69,6 +69,7 @@ class StateLatticePlanner(Planner):
         self.close_set: Dict[Tuple[int, int, int, int], float] = {}
         self.start_idx = self._pos_to_ind(self.T_ww_init[1][0:2] + [0, 0])
         print(f"start idx: {self.start_idx}")
+        # add start index to openset first
         self.open_set: List[Tuple[float, float, Tuple[int, int, int, int]]] = [(0,0,self.start_idx)]
         self.open_d_map: Dict[Tuple[int, int, int, int], float] = {}
         self.traj = {}
@@ -81,6 +82,8 @@ class StateLatticePlanner(Planner):
 
         Args:
             tgt (List): target
+            disp_tol: tolerance for xy
+            rot_tol: tolerance for psi
 
         Returns:
             list: [trajectory data]
@@ -106,23 +109,21 @@ class StateLatticePlanner(Planner):
             if len(self.open_set)%5000 == 1:
                 print(f"len open set: { len(self.open_set)}, min_ind: {min_ind}")
             if min_ind not in self.close_set:
-                # print("Expanding", min_ind)
                 self.close_set[min_ind] = min_dist
                 suc_nodes, suc_data, orien_idx = self.get_successor(min_ind)
                 for i, n_ind in enumerate(suc_nodes):
                     if n_ind in self.close_set:
                         continue
-                    # print(f"suc_data['states_r'][i][-1,:]: {suc_data['states_r'][i][-1,:]}")
                     # The params are hard to tune..., but this seems work ok
-                    # distance traveled of wheelchair/robot as well as heading difference between them
+                    # four terms: distance traveled of wheelchair; of robot; heading difference between them; hrading change of wheelchair
                     mp_cost = suc_data['costs'][i][0] * self.sl.cost_weight[0]\
                             + suc_data['costs'][i][1] * self.sl.cost_weight[1]\
                             + suc_data['costs'][i][2] * self.sl.cost_weight[2]\
                             + np.absolute(n_ind[2]-min_ind[2]) * self.sl.cost_weight[2] 
+                    # two terms: motion primitive cost; obstacle cost
                     cand_cost = mp_cost + min_dist + self._cost_obs(n_ind, min_ind, suc_data['states_r'][i][-1,:])
                     best_known_dist = self.open_d_map.get(n_ind, float('inf'))
                     if cand_cost < best_known_dist:
-                       
                         # euclidean heuristic
                         heapq.heappush(self.open_set,(self.euclidean_heuristic(n_ind) * self.w + cand_cost, cand_cost, n_ind))
                        
@@ -137,6 +138,16 @@ class StateLatticePlanner(Planner):
         return self.retrive_traj()
 
     def next(self):
+        """generate pos from planned trajectory
+
+        Raises:
+            StopIteration: arrived target
+            StopIteration: no more state in trajectory buffer
+            StopIteration: fail to complete the task due to ik issue of collision
+
+        Returns:
+            list: configerations of robot and wheelchair
+        """
         # Check for termination:
         wheelchair_cfg = self.wheelchair_model.getConfig()
         wheelchair_xy = np.array([
@@ -144,6 +155,7 @@ class StateLatticePlanner(Planner):
             wheelchair_cfg[self.wheelchair_dofs[1]]
         ])
         wheelchair_yaw = wheelchair_cfg[self.wheelchair_dofs[2]]
+
         if (np.linalg.norm(wheelchair_xy - self.target[:2]) <= self.disp_tol and
             abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol):
             print("Arrived!")
@@ -161,6 +173,15 @@ class StateLatticePlanner(Planner):
         return self.get_configs()
         
     def get_target_config(self, w_np, r_np) -> List[float]:
+        """get robot and wheelchair configurations based on planned state
+
+        Args:
+            w_np (list): wheelchair state
+            r_np (list): [robot state]
+
+        Returns:
+            List[float]: [configurations of robot and wheelchair]
+        """
         # print(f"gen config from w_np: {w_np} and r_np: {r_np}")
         w_q = self._wheelchair_np_to_cfg(w_np)
         self.wheelchair_model.setConfig(w_q)
@@ -185,10 +206,10 @@ class StateLatticePlanner(Planner):
             t_wee = se3.mul(
                 self.wheelchair_model.link(handle_name).getTransform(),
                 self.t_hee)
-            # print(f"t_wee: {t_wee}")
             goal = ik.objective(link, R=t_wee[0], t=t_wee[1])
             if not ik.solve(goal, activeDofs=dofs):
                 return "ik"
+
         # TODO: check what's caused the collision
         # collides = False
         # for _ in self.collider.collisions():
@@ -257,6 +278,16 @@ class StateLatticePlanner(Planner):
     #     return 0
 
     def _cost_obs(self, ind_w, ind_w_prev, pos_r_l) -> float:
+        """get obstacle cost
+
+        Args:
+            ind_w (Tuple): wheelchair node
+            ind_w_prev (Tuple): pre wheelchair node
+            pos_r_l (ndarray): robot pos inc in local frame
+
+        Returns:
+            float: cost
+        """
         pos_w = self._ind_to_pos(ind_w)
         pos_w_prev = self._ind_to_pos(ind_w_prev)
         pos_r = [pos_w_prev[0] + pos_r_l[0], pos_w_prev[1] + pos_r_l[1], pos_r_l[2]]
