@@ -144,10 +144,10 @@ class StateLatticePlanner(Planner):
             wheelchair_cfg[self.wheelchair_dofs[1]]
         ])
         wheelchair_yaw = wheelchair_cfg[self.wheelchair_dofs[2]]
-        if np.linalg.norm(wheelchair_xy - self.tgt[:2]) <= self.disp_tol:
-            if abs(so2.diff(wheelchair_yaw, self.tgt[2])) <= self.rot_tol:
-                print("Arrived!")
-                raise StopIteration
+        if (np.linalg.norm(wheelchair_xy - self.target[:2]) <= self.disp_tol and
+            abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol):
+            print("Arrived!")
+            raise StopIteration
         
         if self.cfg_ind >= self.traj_w.shape[0]:
             print("reached the end of the planned trajectory")
@@ -309,7 +309,7 @@ class StateLatticePlanner(Planner):
 
     def _pos_to_ind(self, pos: List) -> Tuple[int, int, int, int]:
         return (int(pos[0] // self.sl.r), int(pos[1] // self.sl.r), \
-                int((pos[2] / self.sl.delta_psi + 3)%8), int((pos[3]-pos[2])/self.sl.delta_psi))
+                int((pos[2] / (np.pi/4) + 3)%8), int((pos[3]-pos[2])/self.sl.delta_psi))
 
     def _ind_to_pos(self, ind: Tuple[int, int, int, int]) -> np.ndarray:
         return self.sl.idx2pos(ind)
