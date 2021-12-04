@@ -5,6 +5,7 @@ import klampt
 from klampt.model import collide
 from klampt.math import vectorops as vo
 import numpy as np
+from utils import WheelchairUtility
 
 from consts import SETTINGS_PATH
 
@@ -18,18 +19,18 @@ class GridPlanner:
         self.world_model = klampt.WorldModel()
         self.world_model.loadFile(world_fn)
         self.robot_model: klampt.RobotModel = self.world_model.robot("wheelchair")
+        self.wu = WheelchairUtility(self.robot_model)
         self.base_name = "base_link"
         self.wheelchair_dofs = self.settings["wheelchair_dofs"]
         self.target_cfg = target_cfg
+        self.target_rcfg = self.wu.cfg_to_rcfg(self.target_cfg)
         self.res = res
         self.collider = collide.WorldCollider(self.world_model)
         self._ignore_collision_pairs()
         self._set_collision_margins()
         self.robot_model.setConfig(self.target_cfg)
-        self.target_pos = np.array([
-            self.target_cfg[self.wheelchair_dofs[0]],
-            self.target_cfg[self.wheelchair_dofs[1]]
-        ])
+        self.target_pos = self.target_rcfg[:2]
+        self.target_yaw = self.target_rcfg[2]
         self.yaw = self.target_cfg[self.wheelchair_dofs[2]]
         self.cache: Dict[Tuple[int, int], float] = {}
         start_ind = self._pos_to_ind(self.target_pos)
@@ -105,7 +106,7 @@ class GridPlanner:
         return collides
 
     def _heuristic(self, ind: Tuple[int, int], pos: np.ndarray) -> float:
-        return 0
+        return np.linalg.norm(self._ind_to_pos(ind) - pos[:2])
 
     def _pos_to_ind(self, pos: np.ndarray) -> Tuple[int, int]:
         return (int(pos[0] // self.res), int(pos[1] // self.res))
@@ -114,11 +115,10 @@ class GridPlanner:
         return np.array([ind[0] * self.res, ind[1] * self.res])
 
     def _ind_to_cfg(self, ind: Tuple[int, int]) -> List[float]:
-        pos = self._ind_to_pos(ind)
-        cfg = self.robot_model.getConfig()
-        cfg[self.wheelchair_dofs[0]] = pos[0]
-        cfg[self.wheelchair_dofs[1]] = pos[1]
-        cfg[self.wheelchair_dofs[2]] = self.yaw
+        pos = np.array([*self._ind_to_pos(ind), self.target_yaw])
+        o_cfg = self.robot_model.getConfig()
+        cfg = self.wu.rcfg_to_cfg(pos)
+        self.robot_model.setConfig(o_cfg)
         return cfg
 
     def _ignore_collision_pairs(self):

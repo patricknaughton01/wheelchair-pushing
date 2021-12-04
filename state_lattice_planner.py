@@ -1,4 +1,3 @@
-from typing_extensions import Concatenate
 import numpy as np
 from typing import List, Dict, Tuple
 from utils_.state_lattice import *
@@ -65,7 +64,7 @@ class StateLatticePlanner(Planner):
         self._ignore_collision_pairs()
         self._set_collision_margins()
         self.cfg_ind = 0
-        
+
         self.close_set: Dict[Tuple[int, int, int, int], float] = {}
         self.start_idx = self._pos_to_ind(self.T_ww_init[1][0:2] + [0, 0])
         print(f"start idx: {self.start_idx}")
@@ -119,21 +118,21 @@ class StateLatticePlanner(Planner):
                     mp_cost = suc_data['costs'][i][0] * self.sl.cost_weight[0]\
                             + suc_data['costs'][i][1] * self.sl.cost_weight[1]\
                             + suc_data['costs'][i][2] * self.sl.cost_weight[2]\
-                            + np.absolute(n_ind[2]-min_ind[2]) * self.sl.cost_weight[2] 
+                            + np.absolute(n_ind[2]-min_ind[2]) * self.sl.cost_weight[2]
                     # two terms: motion primitive cost; obstacle cost
                     cand_cost = mp_cost + min_dist + self._cost_obs(n_ind, min_ind, suc_data['states_r'][i][-1,:])
                     best_known_dist = self.open_d_map.get(n_ind, float('inf'))
                     if cand_cost < best_known_dist:
                         # euclidean heuristic
                         heapq.heappush(self.open_set,(self.euclidean_heuristic(n_ind) * self.w + cand_cost, cand_cost, n_ind))
-                       
+
                         # Dijkstra heuristic (doesn't work very well)
                         # n_pos = self._ind_to_pos(n_ind)
                         # heapq.heappush(self.open_set,(gp.get_dist(n_pos) + cand_cost, cand_cost, n_ind))
-                       
+
                         self.open_d_map[n_ind] = cand_cost
                         self.traj[n_ind] = {'prev': min_ind, 'state_w': suc_data['states_w'][i], 'state_r':suc_data['states_r'][i], 'action_taken': [orien_idx, i]}
-        
+
         self.set_configs(self.init_configs) # reset robot and wheelchair pose to the initial ones after plan
         return self.retrive_traj()
 
@@ -160,7 +159,7 @@ class StateLatticePlanner(Planner):
             abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol):
             print("Arrived!")
             raise StopIteration
-        
+
         if self.cfg_ind >= self.traj_w.shape[0]:
             print("reached the end of the planned trajectory")
             raise StopIteration
@@ -171,7 +170,7 @@ class StateLatticePlanner(Planner):
             raise StopIteration
         self.cfg_ind += 1
         return self.get_configs()
-        
+
     def get_target_config(self, w_np, r_np) -> List[float]:
         """get robot and wheelchair configurations based on planned state
 
@@ -329,7 +328,7 @@ class StateLatticePlanner(Planner):
         cur_r_pose[0] = cur_w_pose[0] - self.d_const*np.cos(cur_w_pose[3])
         cur_r_pose[1] = cur_w_pose[1] - self.d_const*np.sin(cur_w_pose[3])
         return cur_r_pose
-        
+
     def euclidean_heuristic(self, node):
         cur_pos = self._ind_to_pos(node)
         dist = cur_pos[0:2] - self.tgt[0:2]
@@ -344,7 +343,7 @@ class StateLatticePlanner(Planner):
 
     def _ind_to_pos(self, ind: Tuple[int, int, int, int]) -> np.ndarray:
         return self.sl.idx2pos(ind)
-    
+
     def _collides_w(self, pos_w) -> bool:
         self.wheelchair_model.setConfig(self._wheelchair_np_to_cfg(pos_w))
         collides = False
@@ -362,7 +361,7 @@ class StateLatticePlanner(Planner):
             # print(f"collision detected on robot pos: {pos_r}")
             break
         return collides
-    
+
     def _ignore_collision_pairs(self):
         # ignore collisions between the wheelchair and robot
         for i in range(self.wheelchair_model.numLinks()):
@@ -415,7 +414,7 @@ class StateLatticePlanner(Planner):
     def _wheelchair_np_to_cfg(self, w_np: List[float]) -> List[float]:
         cfg = self.wheelchair_model.getConfig()
         for i, d in enumerate(self.wheelchair_dofs):
-            cfg[d] = w_np[i]  #+ self.T_ww_init[1][i] 
+            cfg[d] = w_np[i]  #+ self.T_ww_init[1][i]
         return cfg
 
     def _robot_np_to_cfg(self, r_np: List[float]) -> List[float]:

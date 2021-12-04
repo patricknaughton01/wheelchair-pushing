@@ -8,6 +8,7 @@ import numpy as np
 import klampt
 from grid_planner import GridPlanner
 from tracker import Tracker
+from utils import WheelchairUtility
 
 
 class TrackingPlannerInstance(Planner):
@@ -25,6 +26,7 @@ class TrackingPlannerInstance(Planner):
         self.rollout = 20
         self.robot_model: klampt.RobotModel = self.world_model.robot("trina")
         self.wheelchair_model: klampt.RobotModel = self.world_model.robot("wheelchair")
+        self.wu = WheelchairUtility(self.wheelchair_model)
         self.wheelchair_dofs = self.settings["wheelchair_dofs"]
         self.tracker = Tracker(self.world_model, self.dt, self.tracker_weights)
         self.executor = None
@@ -34,24 +36,22 @@ class TrackingPlannerInstance(Planner):
     def plan(self, target: np.ndarray, disp_tol: float, rot_tol: float):
         super().plan(target, disp_tol, rot_tol)
         cfg = self.tracker.wheelchair_model.getConfig()
-        for i, d in enumerate(self.tracker.wheelchair_dofs):
-            cfg[d] = target[i]
-        gp = GridPlanner(self.world_fn, cfg, self.gp_res)
+        t_cfg = self.wu.rcfg_to_cfg(target)
+        self.tracker.wheelchair_model.setConfig(cfg)
+        gp = GridPlanner(self.world_fn, t_cfg, self.gp_res)
         self.executor = TrackerExecutor(self.tracker, cfg, gp, self.disp_tol,
             self.rot_tol, rollout=self.rollout)
         # warm start the grid planner
-        gp.get_dist(self.executor._wheelchair_cfg_to_np(
+        gp.get_dist(self.wu.cfg_to_rcfg(
             self.wheelchair_model.getConfig()))
 
     def next(self):
         self._check_target()
         # Check for termination:
         wheelchair_cfg = self.wheelchair_model.getConfig()
-        wheelchair_xy = np.array([
-            wheelchair_cfg[self.wheelchair_dofs[0]],
-            wheelchair_cfg[self.wheelchair_dofs[1]]
-        ])
-        wheelchair_yaw = wheelchair_cfg[self.wheelchair_dofs[2]]
+        wheelchair_rcfg = self.wu.cfg_to_rcfg(wheelchair_cfg)
+        wheelchair_xy = wheelchair_rcfg[:2]
+        wheelchair_yaw = wheelchair_rcfg[2]
         if np.linalg.norm(wheelchair_xy - self.target[:2]) <= self.disp_tol:
             if abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol:
                 raise StopIteration
@@ -81,15 +81,15 @@ class TrackerExecutor:
         self.rollout = rollout
         if vel_set is None:
             vel_set_list = []
-            for fv in [0.1, 0.5, 1.0]:
-                for rv in [0.0, 0.1, 0.5, 1.0]:
+            for fv in [0.0, 0.1, 1.0]:
+                for rv in [0.0, 0.3, 1.0]:
                     if not (fv < 1e-3 and rv < 1e-3):
                         vel_set_list.append([fv, rv])
                         vel_set_list.append([fv, -rv])
             vel_set = np.array(vel_set_list)
         self.vel_set = vel_set
-        self.wheelchair_dofs = self.settings["wheelchair_dofs"]
-        self.target_np = self._wheelchair_cfg_to_np(self.target_cfg)
+        self.wu = WheelchairUtility(self.tracker.wheelchair_model)
+        self.target_np = self.wu.cfg_to_rcfg(self.target_cfg)
         self.grid_planner = gp
         # (len(self.vel_set), 3), each row i has the resulting r, theta, dtheta
         # encoding the change in position resulting from applying
@@ -103,7 +103,7 @@ class TrackerExecutor:
             self._init_vel_rollout_deltas()
         # Precompute the scores achieved assuming each primitive is feasible
         scores = np.empty(len(self.vel_rollout_deltas))
-        curr_np = self._wheelchair_cfg_to_np(self.tracker.get_configs()[1])
+        curr_np = self.wu.cfg_to_rcfg(self.tracker.get_configs()[1])
         for i in range(len(self.vel_rollout_deltas)):
             vrd = self.vel_rollout_deltas[i, :]
             end_np = np.array([
@@ -127,8 +127,13 @@ class TrackerExecutor:
                 if res != "success":
                     successful_rollout = False
                     break
-                cfg_traj.append(self.tracker.get_configs())
+                cfgs = self.tracker.get_configs()
+                part_score = self.score_config_np(self.wu.cfg_to_rcfg(cfgs[1]))
+                cfg_traj.append(cfgs)
+                # if part_score < scores[ind]:
+                #     break
             if successful_rollout:
+                print(self.vel_set[ind, :])
                 return cfg_traj
             self.tracker.set_configs(cfgs)
         return None
@@ -140,7 +145,7 @@ class TrackerExecutor:
             align_with_goal_score = abs(so2.diff(wheelchair_np[2],
                 self.target_np[2]))
         self.tracker.wheelchair_model.setConfig(
-            self._wheelchair_np_to_confg(wheelchair_np))
+            self.wu.rcfg_to_cfg(wheelchair_np))
         closest_dist = None
         max_dist = 2.0
         link_geo = self.tracker.wheelchair_model.link("base_link").geometry()
@@ -153,7 +158,9 @@ class TrackerExecutor:
                         closest_dist = dist
         if closest_dist is None:
             closest_dist = max_dist
-        return goal_dist_score + align_with_goal_score + 10*(max_dist - closest_dist)
+        score = goal_dist_score + align_with_goal_score + 5*(max_dist - closest_dist)
+        # print(align_with_goal_score, score)
+        return score
 
     def _init_vel_rollout_deltas(self):
         self.vel_rollout_deltas = np.empty((len(self.vel_set), 3))
@@ -173,15 +180,3 @@ class TrackerExecutor:
                 np.arctan2(curr_pos[1], curr_pos[0]),
                 curr_pos[2]
             ])
-
-    def _wheelchair_cfg_to_np(self, cfg: List[float]) -> np.ndarray:
-        arr = []
-        for d in self.wheelchair_dofs:
-            arr.append(cfg[d])
-        return np.array(arr)
-
-    def _wheelchair_np_to_confg(self, arr: np.ndarray) -> List[float]:
-        cfg = self.tracker.wheelchair_model.getConfig()
-        for i, d in enumerate(self.wheelchair_dofs):
-            cfg[d] = arr[i]
-        return cfg

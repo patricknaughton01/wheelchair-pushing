@@ -8,7 +8,7 @@ import json
 import klampt
 from klampt.math import so2, vectorops as vo
 from tracking_planner import TrackingPlannerInstance
-from utils import extract_cfg
+from utils import WheelchairUtility, extract_cfg
 
 
 class Evaluator:
@@ -23,6 +23,7 @@ class Evaluator:
         self.world_model.loadFile(world_fn)
         self.robot_model: klampt.RobotModel = self.world_model.robot("trina")
         self.wheelchair_model: klampt.RobotModel = self.world_model.robot("wheelchair")
+        self.wu = WheelchairUtility(self.wheelchair_model)
         self.target: np.ndarray = None
         self.disp_tol: float = 0
         self.rot_tol: float = 0
@@ -51,15 +52,14 @@ class Evaluator:
                 self.trajectory.append(cfgs)
                 self.robot_model.setConfig(cfgs[0])
                 self.wheelchair_model.setConfig(cfgs[1])
+                print(self.wu.cfg_to_rcfg(self.wheelchair_model.getConfig()))
                 count += 1
             except StopIteration:
                 break
         wheelchair_cfg = self.wheelchair_model.getConfig()
-        wheelchair_xy = np.array([
-            wheelchair_cfg[self.wheelchair_dofs[0]],
-            wheelchair_cfg[self.wheelchair_dofs[1]]
-        ])
-        wheelchair_yaw = wheelchair_cfg[self.wheelchair_dofs[2]]
+        wheelchair_rcfg = self.wu.cfg_to_rcfg(wheelchair_cfg)
+        wheelchair_xy = wheelchair_rcfg[:2]
+        wheelchair_yaw = wheelchair_rcfg[2]
         if (np.linalg.norm(wheelchair_xy - self.target[:2]) <= self.disp_tol and
             abs(so2.diff(wheelchair_yaw, self.target[2])) <= self.rot_tol
         ):
@@ -113,7 +113,7 @@ class Evaluator:
 
 
 if __name__ == "__main__":
-    world_fn = "Model/worlds/TRINA_world_cholera.xml"
+    world_fn = "Model/worlds/world_short_turn.xml"
     p = TrackingPlannerInstance(world_fn, 1 / 50)
     e = Evaluator(p, world_fn)
     e.eval(np.array([10.0, 0.0, 0.0]), 0.5, 0.5)

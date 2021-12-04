@@ -111,6 +111,8 @@ def main():
             for g in test["goals"]:
                 total_settings.append((p_name, world_fn, g))
     for setting in tqdm(total_settings):
+        print("Working on setting: ")
+        print(setting)
         p_name, world_fn, g = setting
         goal = np.array(g, dtype="float64")
         goal[2] = np.radians(goal[2])
