@@ -111,7 +111,9 @@ class TrackerExecutor:
                 curr_np[1] + vrd[0] * np.sin(vrd[1] + curr_np[2]),
                 curr_np[2] + vrd[2]
             ])
+            cfgs = self.tracker.get_configs()
             scores[i] = self.score_config_np(end_np)
+            self.tracker.set_configs(cfgs)
         # sorts in increasing order
         score_sorted_inds = np.argsort(scores)
         # Eval in sorted order, pick first feasible
@@ -137,7 +139,21 @@ class TrackerExecutor:
         if goal_dist_score < self.disp_tol:
             align_with_goal_score = abs(so2.diff(wheelchair_np[2],
                 self.target_np[2]))
-        return goal_dist_score + align_with_goal_score
+        self.tracker.wheelchair_model.setConfig(
+            self._wheelchair_np_to_confg(wheelchair_np))
+        closest_dist = None
+        max_dist = 2.0
+        link_geo = self.tracker.wheelchair_model.link("base_link").geometry()
+        for i in range(self.tracker.world_model.numTerrains()):
+            terr: klampt.TerrainModel = self.tracker.world_model.terrain(i)
+            if terr.getName() != "floor":
+                if terr.geometry().withinDistance(link_geo, max_dist):
+                    dist = terr.geometry().distance(link_geo).d
+                    if closest_dist is None or dist < closest_dist:
+                        closest_dist = dist
+        if closest_dist is None:
+            closest_dist = max_dist
+        return goal_dist_score + align_with_goal_score + 10*(max_dist - closest_dist)
 
     def _init_vel_rollout_deltas(self):
         self.vel_rollout_deltas = np.empty((len(self.vel_set), 3))
@@ -163,3 +179,9 @@ class TrackerExecutor:
         for d in self.wheelchair_dofs:
             arr.append(cfg[d])
         return np.array(arr)
+
+    def _wheelchair_np_to_confg(self, arr: np.ndarray) -> List[float]:
+        cfg = self.tracker.wheelchair_model.getConfig()
+        for i, d in enumerate(self.wheelchair_dofs):
+            cfg[d] = arr[i]
+        return cfg
