@@ -81,7 +81,7 @@ class TrackerExecutor:
         self.rollout = rollout
         if vel_set is None:
             vel_set_list = []
-            for fv in [0.0, 0.1, 1.0]:
+            for fv in [0.0, 0.5, 1.0]:
                 for rv in [0.0, 0.3, 1.0]:
                     if not (fv < 1e-3 and rv < 1e-3):
                         vel_set_list.append([fv, rv])
@@ -122,19 +122,22 @@ class TrackerExecutor:
             cfgs = self.tracker.get_configs()
             successful_rollout = True
             cfg_traj: List[Tuple[List[float], List[float]]] = []
-            for _ in range(self.rollout):
+            rollout_scores: np.ndarray = np.empty(self.rollout)
+            for i in range(self.rollout):
                 res = self.tracker.get_target_config(targ_vel)
                 if res != "success":
                     successful_rollout = False
                     break
-                cfgs = self.tracker.get_configs()
-                part_score = self.score_config_np(self.wu.cfg_to_rcfg(cfgs[1]))
-                cfg_traj.append(cfgs)
+                rollout_cfgs = self.tracker.get_configs()
+                part_score = self.score_config_np(self.wu.cfg_to_rcfg(rollout_cfgs[1]))
+                cfg_traj.append(rollout_cfgs)
+                rollout_scores[i] = part_score
                 # if part_score < scores[ind]:
                 #     break
             if successful_rollout:
                 print(self.vel_set[ind, :])
-                return cfg_traj
+                best_score_ind = rollout_scores.argmin() + 1
+                return cfg_traj[:best_score_ind]
             self.tracker.set_configs(cfgs)
         return None
 
