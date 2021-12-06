@@ -52,7 +52,6 @@ class Evaluator:
                 self.trajectory.append(cfgs)
                 self.robot_model.setConfig(cfgs[0])
                 self.wheelchair_model.setConfig(cfgs[1])
-                print(self.wu.cfg_to_rcfg(self.wheelchair_model.getConfig()))
                 count += 1
             except StopIteration:
                 break

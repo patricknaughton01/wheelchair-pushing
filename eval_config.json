@@ -6,7 +6,7 @@
     "disp_tol": 0.5,
     "rot_tol": 30,
     "manager_dt": 0.5,
-    "planners": ["tracking"],
+    "planners": ["tracking", "state_lattice"],
     "tests":[
         {
             "world_fn": "Model/worlds/world_long_turn.xml",

@@ -27,7 +27,7 @@ def main():
     parser.add_argument("-s", action="store_true",
         help="save frames from the simulation")
     args = vars(parser.parse_args())
-    world_fn = "Model/worlds/world_long_turn.xml"
+    world_fn = "Model/worlds/world_short_turn.xml"
     world = klampt.WorldModel()
     world.loadFile(world_fn)
     dt = 1 / 50
@@ -37,7 +37,7 @@ def main():
         planner = StateLatticePlanner(sl, world_fn, dt)
     else:
         raise ValueError("Unknown planner type")
-    planner.plan(np.array([0.0, 0.0, np.pi]), 0.5, 0.5)
+    planner.plan(np.array([0.0, -10.0, 0]), 0.5, 0.1)
     iter = 0
     vis.add("world", world)
     viewport = GLViewport()
@@ -67,16 +67,15 @@ def advance_sim(world: klampt.WorldModel, planner: Planner, dt: float):
     global running_flag, sim_running_flag
     robot_model = world.robot("trina")
     wheelchair_model = world.robot("wheelchair")
-    iter = 0
     wu = WheelchairUtility(wheelchair_model)
+    iter = 0
     while running_flag:
         iter += 1
         try:
             planner.next()
             robot_model.setConfig(planner.robot_model.getConfig())
             wheelchair_model.setConfig(planner.wheelchair_model.getConfig())
-            rcfg = wu.cfg_to_rcfg(wheelchair_model.getConfig())
-            print(rcfg, np.linalg.norm(rcfg[:2] - np.array([0.0, 0.0])))
+            print(wu.cfg_to_rcfg(wheelchair_model.getConfig()))
             time.sleep(dt)
         except StopIteration:
             print("Stopped at iteration ", iter)

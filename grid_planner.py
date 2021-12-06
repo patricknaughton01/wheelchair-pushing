@@ -1,9 +1,10 @@
 import json
 import heapq
+import math
 from typing import Dict, List, Tuple
 import klampt
 from klampt.model import collide
-from klampt.math import vectorops as vo
+from klampt.math import so2, vectorops as vo
 import numpy as np
 from utils import WheelchairUtility
 
@@ -12,7 +13,8 @@ from consts import SETTINGS_PATH
 
 class GridPlanner:
     def __init__(self, world_fn: str,
-        target_cfg: List[float], res: float
+        target_cfg: List[float], res: float, rot_res: float=np.pi/4,
+        rot_d_scale: float=0.1
     ):
         with open(SETTINGS_PATH, "r") as f:
             self.settings = json.load(f)
@@ -23,55 +25,77 @@ class GridPlanner:
         self.base_name = "base_link"
         self.wheelchair_dofs = self.settings["wheelchair_dofs"]
         self.target_cfg = target_cfg
-        self.target_rcfg = self.wu.cfg_to_rcfg(self.target_cfg)
         self.res = res
+        self.rot_res = rot_res
+        self.rot_d_scale = rot_d_scale
+        self.num_angle_inds = math.floor(2 * np.pi / self.rot_res)
         self.collider = collide.WorldCollider(self.world_model)
         self._ignore_collision_pairs()
         self._set_collision_margins()
         self.robot_model.setConfig(self.target_cfg)
-        self.target_pos = self.target_rcfg[:2]
-        self.target_yaw = self.target_rcfg[2]
+        self.target_np = self.wu.cfg_to_rcfg(self.target_cfg)
         self.yaw = self.target_cfg[self.wheelchair_dofs[2]]
-        self.cache: Dict[Tuple[int, int], float] = {}
-        start_ind = self._pos_to_ind(self.target_pos)
-        self.open_set: List[Tuple[float, float, Tuple[int, int]]] = [(0, 0, start_ind)]
-        self.open_d_map: Dict[Tuple[int, int], float] = {}
-        self.deltas = [(0,1), (0,-1), (-1,0), (1,0), (1,1), (1,-1), (-1,1), (-1,-1)]
+        self.cache: Dict[Tuple[int, int, int], Tuple[float, Tuple[int, int, int]]] = {}
+        start_ind = self._pos_to_ind(self.target_np)
+        self.open_set: List[Tuple[float, float, Tuple[int, int, int], Tuple[int, int, int]]] = [(0, 0, start_ind, start_ind)]
+        self.open_d_map: Dict[Tuple[int, int, int], float] = {}
 
     def get_dist(self, pos: np.ndarray) -> float:
-        ind = list(self._pos_to_ind(pos))
-        corner_inds: List[Tuple[int, int]] = []
-        for delta in [[0,0], [0,1], [1,0], [1,1]]:
-            corner_inds.append(tuple(vo.add(ind, delta)))
-            if self._collides(corner_inds[-1]):
-                self.cache[corner_inds[-1]] = float('inf')
+        tup_ind = self._pos_to_ind(pos)
+        ind = list(tup_ind)
+        # print("GRID PLANNER QUERIED IND: ", ind, pos)
+        corner_inds: List[Tuple[int, int, int]] = []
+        for delta in [[0,0,0]]:#, [0,1,0], [1,0,0], [1,1,0], [0,0,1], [0,1,1], [1,0,1], [1,1,1]]:
+            neighbor = vo.add(ind, delta)
+            neighbor[2] = neighbor[2] % self.num_angle_inds
+            corner_inds.append(tuple(neighbor))
+        # Skip updating the open set if we already have all necessary info
+        # for this query
+        if not self._found_corners(corner_inds):
+            # Update heuristic values in open set based on new pos query
+            for i, val in enumerate(self.open_set):
+                self.open_set[i] = (
+                    self._heuristic(val[2], pos) + val[1], val[1], val[2], val[3]
+                )
+            heapq.heapify(self.open_set)
         # A* to find grid distance to the relevant four corners
         while (not self._found_corners(corner_inds)) and (len(self.open_set) > 0):
-            _, min_dist, min_ind = heapq.heappop(self.open_set)
+            _, min_dist, min_ind, bp = heapq.heappop(self.open_set)
             # Only continue if we haven't already expanded this index
             if min_ind not in self.cache:
-                # print("Expanding", min_ind)
-                self.cache[min_ind] = min_dist
-                for delta in self.deltas:
-                    n_ind = (min_ind[0] + delta[0], min_ind[1] + delta[1])
+                self.cache[min_ind] = (min_dist, bp)
+                for n_ind, c in self._neighbors(min_ind):
                     if n_ind in self.cache:
                         continue
-                    cand_cost = self._cost(min_ind, n_ind) + min_dist
+                    cand_cost = c + min_dist
                     best_known_dist = self.open_d_map.get(n_ind, float('inf'))
                     if cand_cost < best_known_dist:
                         heapq.heappush(self.open_set,
                             (self._heuristic(n_ind, pos) + cand_cost,
-                                cand_cost, n_ind))
+                                cand_cost, n_ind, min_ind))
                         self.open_d_map[n_ind] = cand_cost
-        return self._bilinear_interpolate(corner_inds, pos)
+        # c1 = self._bilinear_interpolate(corner_inds[:4], pos)
+        # c2 = self._bilinear_interpolate(corner_inds[4:], pos)
+        # yaw = pos[2]
+        # yaw_ind = ind[2]
+        # n_yaw_ind = (ind[2] + 1) % self.num_angle_inds
+        # yaw_ind_yaw = yaw_ind * self.rot_res
+        # n_yaw_ind_yaw = n_yaw_ind * self.rot_res
+        # bd1 = so2.diff(yaw, yaw_ind_yaw)
+        # d = so2.diff(n_yaw_ind_yaw, yaw_ind_yaw)
+        # ret = c1 * (1 - bd1 / d) + c2 * bd1 / d
+        # print(c1, c2, yaw, yaw_ind_yaw, n_yaw_ind_yaw)
+        # ret = self.cache[tup_ind][0]
+        return self.cache[tup_ind]
 
-    def _found_corners(self, corner_inds: List[Tuple[int, int]]) -> bool:
+
+    def _found_corners(self, corner_inds: List[Tuple[int, int, int]]) -> bool:
         for c in corner_inds:
             if c not in self.cache:
                 return False
         return True
 
-    def _bilinear_interpolate(self, corner_inds: List[Tuple[int, int]], pos: np.ndarray) -> float:
+    def _bilinear_interpolate(self, corner_inds: List[Tuple[int, int, int]], pos: np.ndarray) -> float:
         # Assumes corners come in order:
         # 0 2
         # 1 3
@@ -80,7 +104,7 @@ class GridPlanner:
         dists = []
         poses = []
         for c in corner_inds:
-            dists.append(self.cache[c])
+            dists.append(self.cache[c][0])
             poses.append(self._ind_to_pos(c))
         frac_x = (pos[0] - poses[0][0]) / (poses[2][0] - poses[0][0])
         frac_y = (pos[1] - poses[0][1]) / (poses[1][1] - poses[0][1])
@@ -89,15 +113,48 @@ class GridPlanner:
         ret = t1 * (1 - frac_y) + t2 * frac_y
         return ret
 
-    def _cost(self, inda: Tuple[int, int], indb: Tuple[int, int]) -> float:
-        for ind in (inda, indb):
-            if self._collides(ind):
-                return float('inf')
-        na = np.array(inda) * self.res
-        nb = np.array(indb) * self.res
-        return np.linalg.norm(nb - na)
+    def _neighbors(self, s: Tuple[int, int, int]) -> List[Tuple[Tuple[int, int, int], float]]:
+        x_ind, y_ind, yaw_ind = s
+        pos = self._ind_to_pos(s)
+        yaw = pos[2]
+        # Turn in place
+        neighbors = [
+            ((x_ind, y_ind, (yaw_ind-1) % self.num_angle_inds), self.rot_d_scale * self.rot_res),
+            ((x_ind, y_ind, (yaw_ind+1) % self.num_angle_inds), self.rot_d_scale * self.rot_res)
+        ]
+        # Go backwards from node (because expanding from goal)
+        new_x_ind = round(x_ind - np.cos(yaw))
+        new_y_ind = round(y_ind - np.sin(yaw))
+        new_ind = (new_x_ind, new_y_ind, yaw_ind)
+        new_pos = self._ind_to_pos(new_ind)
+        neighbors.append(
+            (new_ind, np.linalg.norm(new_pos[:2] - pos[:2]))
+        )
+        max_dist = 0.75
+        link_geo = self.robot_model.link("base_link").geometry()
+        for i in range(len(neighbors)):
+            ind, c = neighbors[i]
+            pos = self._ind_to_pos(ind)
+            cfg = self.wu.rcfg_to_cfg(pos)
+            self.robot_model.setConfig(cfg)
+            closest_dist = None
+            for j in range(self.world_model.numTerrains()):
+                terr: klampt.TerrainModel = self.world_model.terrain(j)
+                if terr.getName() == "floor":
+                    continue
+                if terr.geometry().withinDistance(link_geo, max_dist):
+                    dist = terr.geometry().distance(link_geo).d
+                    if closest_dist is None or dist < closest_dist:
+                        closest_dist = dist
+            if closest_dist is not None:
+                c += np.exp(-closest_dist)
+                if closest_dist < 0:
+                    c = float('inf')
+                    # c += 10 * np.exp(-closest_dist)
+            neighbors[i] = (ind, c)
+        return neighbors
 
-    def _collides(self, ind: Tuple[int, int]) -> bool:
+    def _collides(self, ind: Tuple[int, int, int]) -> bool:
         self.robot_model.setConfig(self._ind_to_cfg(ind))
         collides = False
         for _ in self.collider.collisions():
@@ -105,21 +162,60 @@ class GridPlanner:
             break
         return collides
 
-    def _heuristic(self, ind: Tuple[int, int], pos: np.ndarray) -> float:
-        return np.linalg.norm(self._ind_to_pos(ind) - pos[:2])
+    def _heuristic(self, ind: Tuple[int, int, int], pos: np.ndarray) -> float:
+        # return 0
+        return np.linalg.norm(self._ind_to_pos(ind)[:2] - pos[:2])
 
-    def _pos_to_ind(self, pos: np.ndarray) -> Tuple[int, int]:
-        return (int(pos[0] // self.res), int(pos[1] // self.res))
+    def _pos_to_ind(self, pos: np.ndarray) -> Tuple[int, int, int]:
+        yaw = pos[2]
+        while yaw >= 2 * np.pi:
+            yaw -= 2 * np.pi
+        while yaw < 0:
+            yaw += 2 * np.pi
+        yaw_ind = math.floor(yaw / self.rot_res) % self.num_angle_inds
+        return (
+            math.floor(pos[0] / self.res),
+            math.floor(pos[1] / self.res),
+            yaw_ind
+        )
 
-    def _ind_to_pos(self, ind: Tuple[int, int]) -> np.ndarray:
-        return np.array([ind[0] * self.res, ind[1] * self.res])
+    def _ind_to_pos(self, ind: Tuple[int, int, int]) -> np.ndarray:
+        return np.array([
+            ind[0] * self.res,
+            ind[1] * self.res,
+            (ind[2] % self.num_angle_inds) * self.rot_res
+        ])
 
-    def _ind_to_cfg(self, ind: Tuple[int, int]) -> List[float]:
-        pos = np.array([*self._ind_to_pos(ind), self.target_yaw])
+    def _ind_to_cfg(self, ind: Tuple[int, int, int]) -> List[float]:
+        pos = np.array(self._ind_to_pos(ind))
         o_cfg = self.robot_model.getConfig()
         cfg = self.wu.rcfg_to_cfg(pos)
         self.robot_model.setConfig(o_cfg)
         return cfg
+
+    def _pos_to_nearest_pos(self, pos: np.ndarray) -> np.ndarray:
+        ind = self._pos_to_ind(pos)
+        closest_dist = None
+        closest_xy = None
+        closest_yaw = None
+        for delta in [[0,0,0], [0,1,0], [1,0,0], [1,1,0]]:
+            neighbor = vo.add(ind, delta)
+            neighbor[2] = neighbor[2] % self.num_angle_inds
+            n_pos = self._ind_to_pos(neighbor)
+            dist = np.linalg.norm(n_pos[:2] - pos[:2])
+            if closest_dist is None or dist < closest_dist:
+                closest_dist = dist
+                closest_xy = n_pos[:2]
+        yaw = pos[2]
+        yaw_ind = ind[2]
+        n_yaw_ind = (ind[2] + 1) % self.num_angle_inds
+        yaw_ind_yaw = yaw_ind * self.rot_res
+        n_yaw_ind_yaw = n_yaw_ind * self.rot_res
+        if abs(so2.diff(yaw, yaw_ind_yaw)) < abs(so2.diff(n_yaw_ind_yaw, yaw)):
+            closest_yaw = yaw_ind_yaw
+        else:
+            closest_yaw = n_yaw_ind_yaw
+        return np.array([*closest_xy, closest_yaw])
 
     def _ignore_collision_pairs(self):
         for i in range(self.robot_model.numLinks()):
@@ -153,4 +249,4 @@ class GridPlanner:
         for i in range(self.robot_model.numLinks()):
             link = self.robot_model.link(i)
             if not link.geometry().empty():
-                link.geometry().setCollisionMargin(0.75)
+                link.geometry().setCollisionMargin(0.25)

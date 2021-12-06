@@ -27,6 +27,10 @@ class WheelchairUtility:
         self.model.setConfig(cfg)
         tf = self.model.link(self.base_name).getTransform()
         yaw = np.arctan2(tf[0][1], tf[0][0])
+        while yaw >= 2 * np.pi:
+            yaw -= 2 * np.pi
+        while yaw < 0:
+            yaw += 2 * np.pi
         return np.array([tf[1][0], tf[1][1], yaw])
 
     def rcfg_to_cfg(self, rcfg: np.ndarray) -> List[float]:
