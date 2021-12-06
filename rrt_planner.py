@@ -286,7 +286,7 @@ class RRTPlanner:
         if abs(yaw_diff) < self.rot_tol:
             pass
 
-        n = int(yaw_diff/(self.base_v_lim[2]/2*self.dt))
+        n = int(abs(yaw_diff)/(self.base_v_lim[2]/2*self.dt))
 
         dyaw = (to_node.yaw-from_node.yaw)/n
 
