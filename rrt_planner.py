@@ -158,8 +158,8 @@ class RRTPlanner:
         new_node_list = []
 
         for i in range(3):
-            vr = random.randint(0,self.EE_vel_lim[0]*10)*0.1
-            vl = random.randint(0,self.EE_vel_lim[1]*10)*0.1 
+            vr = random.randint(5,self.EE_vel_lim[0]*10)*0.1
+            vl = random.randint(5,self.EE_vel_lim[1]*10)*0.1 
             v = (vr+vl)/2
             dyaw = (vr-vl)/0.68 #TODO: change to real wb value in CAD
             if abs(dyaw)> self.base_v_lim[2]:
