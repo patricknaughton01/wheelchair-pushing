@@ -153,10 +153,13 @@ class DecoupledRRTPlanner:
             # nearest_ind = self._get_nearest(self.node_list, w_rnd)
             new_node = self._steer(self.node_list[-1],w_rnd)  
             
+            
             if new_node != None:
                 self.node_list.append(new_node)
+            # else:
+            #     # print("None")
         
-            # if i % 100 == 0:
+            # if i % 1000 == 0:
             #     self.draw_graph(self.node_list[-1],w_pos)
 
         return None
@@ -183,7 +186,7 @@ class DecoupledRRTPlanner:
                 self.robot_model.link(self.base_name).getTransform()),
             self.wheelchair_model.link(self.w_base_name).getTransform())
 
-        if self.r_t_w[1][0]<0.7 or self.r_t_w[1][0]>1 or abs(self.r_t_w[1][1])>0.3:
+        if self.r_t_w[1][0]<0.7 or self.r_t_w[1][0]>1 or abs(self.r_t_w[1][1])>0.2:
             return "Reachability"
         
         return "success"
@@ -369,7 +372,7 @@ class DecoupledRRTPlanner:
             # print(check)
             new_node.x += (0.01/dist)*(to_node.x-from_node.x)
             new_node.y += (0.01/dist)*(to_node.y-from_node.y)
-            new_node.yaw += (0.01/dist)*abs(to_node.yaw-from_node.yaw)*(to_node.yaw-from_node.yaw)
+            new_node.yaw += (0.01/dist)*(to_node.yaw-from_node.yaw)
             # new_node.cost += self.get_dist(from_node, new_node)
             new_node.path.append([new_node.x,new_node.y, new_node.yaw])
             new_node.path_x.append(new_node.x)
@@ -529,7 +532,7 @@ def mirror_arm_config(config):
 def main():
     import time
     from klampt import vis
-    world_fn = "Model/worlds/world_long_turn.xml"
+    world_fn = "Model/worlds/world_corridor.xml"
     world = klampt.WorldModel()
     world.loadFile(world_fn)
     robot_model = world.robot("trina")
