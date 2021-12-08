@@ -108,7 +108,7 @@ def main():
     total_settings = []
     for p_name in eval_settings["planners"]:
         res[p_name] = {}
-        num_itr = 20
+        num_itr = 10
         if p_name == "rrt":
             for i in range(num_itr):
                 for test in eval_settings["tests"]:
