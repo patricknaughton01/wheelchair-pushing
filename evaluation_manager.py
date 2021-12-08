@@ -108,7 +108,7 @@ def main():
     total_settings = []
     for p_name in eval_settings["planners"]:
         res[p_name] = {}
-        num_itr = 10
+        num_itr = 20
         if p_name == "rrt":
             for i in range(num_itr):
                 for test in eval_settings["tests"]:
@@ -134,34 +134,36 @@ def main():
 
         if p_name == "rrt":
             result = m.run_eval()
+            if "success" in result.keys():
+                if result["success"] == True:
+                    result["success"] = 1
+                elif result["success"] == False:
+                    result["success"] = 0
 
-            if result["success"] == True:
-                result["success"] = 1
-
-            elif result["success"] == False:
-                result["success"] = 0
-
-            if res[p_name][world_fn] == {}:
-                res[p_name][world_fn][str(g)] = result
-            
-            else:
-                if result["success"] == 1:
-                    for metric in result.keys():
-                        res[p_name][world_fn][str(g)][metric] += result[metric]
+                if res[p_name][world_fn] == {}:
+                    res[p_name][world_fn][str(g)] = result
+                
+                else:
+                    if result["success"] == 1:
+                        for metric in result.keys():
+                            res[p_name][world_fn][str(g)][metric] += result[metric]
 
         else:
             res[p_name][world_fn][str(g)] = m.run_eval()
     
-    for world in res["rrt"]:
-        for goal in res["rrt"][world]:
-            success_num = res["rrt"][world][goal]["success"]
-            print(success_num)
-            if success_num != 0:
-                for metric in res["rrt"][world][goal]:
-                    if metric == "success":
-                        res["rrt"][world][goal][metric] = res["rrt"][world][goal][metric]/num_itr
-                    else: 
-                        res["rrt"][world][goal][metric] = res["rrt"][world][goal][metric]/success_num
+    
+    if "rrt" in res.keys():
+        for world in res["rrt"]:
+            for goal in res["rrt"][world]:
+                if not "error" in res["rrt"][world][goal].keys():      
+                    success_num = res["rrt"][world][goal]["success"]
+                    # print(success_num)
+                    if success_num != 0:
+                        for metric in res["rrt"][world][goal]:
+                            if metric == "success":
+                                res["rrt"][world][goal][metric] = res["rrt"][world][goal][metric]/num_itr
+                            else: 
+                                res["rrt"][world][goal][metric] = res["rrt"][world][goal][metric]/success_num
 
     with open(args["o"], "w") as f:
         json.dump(res, f, indent="\t")
@@ -169,3 +171,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
