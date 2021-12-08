@@ -87,7 +87,9 @@ class StateLatticePlanner(Planner):
         Returns:
             list: [trajectory data]
         """
-        self.tgt = np.append(tgt, tgt[2])
+        sl_tgt = tgt.copy()
+        sl_tgt[:2] = sl_tgt[:2] - self.T_ww_init[1][0:2]
+        self.tgt = np.append(sl_tgt, sl_tgt[2])
         self.tgt_idx = self._pos_to_ind(self.tgt)
         print(f"start plan for target: {self.tgt } with index {self.tgt_idx}")
         super().plan(tgt, disp_tol, rot_tol)
