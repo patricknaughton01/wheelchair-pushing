@@ -101,14 +101,15 @@ class Evaluator:
                 wheelchair_r_accel += abs(w_r_vel - last_w_r_vel)**2
             last_w_t_vel = w_t_vel
             last_w_r_vel = w_r_vel
+        n_a = len(self.trajectory) - 2
         self.stats["trina_cfg_dist"] = trina_cfg_dist
         self.stats["trina_base_t_dist"] = trina_base_t_dist
         self.stats["trina_base_r_dist"] = trina_base_r_dist
         self.stats["trina_strafe_dist"] = trina_strafe_dist
         self.stats["wheelchair_t_dist"] = wheelchair_t_dist
         self.stats["wheelchair_r_dist"] = wheelchair_r_dist
-        self.stats["wheelchair_t_accel_sq"] = wheelchair_t_accel
-        self.stats["wheelchair_r_accel_sq"] = wheelchair_r_accel
+        self.stats["wheelchair_t_accel_rmsa"] = (wheelchair_t_accel / n_a)**0.5
+        self.stats["wheelchair_r_accel_rmsa"] = (wheelchair_r_accel / n_a)**0.5
 
 
 if __name__ == "__main__":
