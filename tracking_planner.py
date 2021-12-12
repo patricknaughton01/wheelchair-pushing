@@ -9,6 +9,7 @@ import numpy as np
 import klampt
 from grid_planner import GridPlanner
 from tracker import Tracker
+from combo_tracker import ComboTracker
 from utils import WheelchairUtility
 
 

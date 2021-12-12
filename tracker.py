@@ -8,6 +8,7 @@ from klampt.model import ik, collide
 import cvxpy as cp
 import numpy as np
 from consts import SETTINGS_PATH
+from utils import WheelchairUtility
 
 
 class Tracker:
@@ -74,9 +75,9 @@ class Tracker:
         self.left_attractor = np.array(self.get_arm_cfg('l', q))
         self.right_attractor = np.array(self.get_arm_cfg('r', q))
         self.arms_attractor = np.concatenate((self.left_attractor, self.right_attractor))
-        self.left_in_right = se3.mul(
-            se3.inv(self.robot_model.link("left_tool_link").getTransform()),
-            self.robot_model.link("right_tool_link").getTransform())
+        self.t_lr = se3.mul(
+            se3.inv(self.robot_model.link(self.left_name).getTransform()),
+            self.robot_model.link(self.right_name).getTransform())
         ## Initial LS problem
         self.ls_target_twist_param = cp.Parameter(
             self.m * self.num_arms, name="v_target")
@@ -129,7 +130,12 @@ class Tracker:
         self.collider = collide.WorldCollider(self.world_model)
         self._ignore_collision_pairs()
 
-    def get_target_config(self, vel: np.ndarray) -> List[float]:
+        self.wu = WheelchairUtility(self.wheelchair_model)
+        # Store the original transform of the left hand in the world frame to
+        # constrain its z, roll, and pitch values in the global frame.
+        self.init_t_wl = self.robot_model.link(self.left_name).getTransform()
+
+    def get_target_config(self, vel: np.ndarray) -> str:
         orig_w_cfg = self.wheelchair_model.getConfig()
         w_t_wb = self.wheelchair_model.link(self.w_base_name).getTransform()
         yaw = math.atan2(w_t_wb[0][1], w_t_wb[0][0])
@@ -190,6 +196,83 @@ class Tracker:
         if self.robot_model.selfCollides() or collides:
             return "collision"
         return "success"
+        # w_t_wb = self.wheelchair_model.link(self.w_base_name).getTransform()
+        # yaw = math.atan2(w_t_wb[0][1], w_t_wb[0][0])
+        # # In world frame, translation vectors from wheelchair base to handles
+        # w_p_w_bl = so3.apply(w_t_wb[0], self.w_t_bl[1])
+        # w_p_w_br = so3.apply(w_t_wb[0], self.w_t_br[1])
+        # omega = np.array([0, 0, vel[1]])
+        # vel_l = (np.array([np.cos(yaw) * vel[0], np.sin(yaw) * vel[0], 0])
+        #     + np.cross(omega, w_p_w_bl))
+        # vel_r = (np.array([np.cos(yaw) * vel[0], np.sin(yaw) * vel[0], 0])
+        #     + np.cross(omega, w_p_w_br))
+        # target = np.concatenate((
+        #     omega, vel_l, omega, vel_r
+        # ))
+
+        # cfg = self.robot_model.getConfig()
+        # q_dot = self.get_q_dot(cfg, target)
+        # delta_q = self.dt * q_dot
+        # new_t_cfg = self.extract_cfg(cfg) + delta_q
+        # new_cfg = cfg[:]
+        # self.pack_cfg(new_cfg, new_t_cfg)
+        # self.robot_model.setConfig(new_cfg)
+
+        # # Constrain the left hand to have the same z, roll, and pitch as it
+        # # did initially in the world frame.
+        # t_wl = list(self.robot_model.link(self.left_name).getTransform())
+        # global_constr_to_target = so3.mul(t_wl[0],
+        #     so3.inv(self.init_t_wl[0]))
+        # global_constr_to_target_rpy = list(so3.rpy(global_constr_to_target))
+        # # Zero out the global roll and pitch of the left hand
+        # for i in range(2):
+        #     global_constr_to_target_rpy[i] = 0
+        # t_wl[0] = so3.mul(so3.from_rpy(global_constr_to_target_rpy),
+        #     self.init_t_wl[0])
+        # # Constrain z
+        # p_wl = list(t_wl[1])
+        # p_wl[2] = self.init_t_wl[1][2]
+        # t_wl[1] = p_wl
+
+        # # Modify t_wl so that the wheelchair obeys differential constraints
+        # init_t_ww = self.wheelchair_model.link(self.w_base_name).getTransform()
+        # init_yaw = yaw = math.atan2(init_t_ww[0][1], init_t_ww[0][0])
+        # init_w_np = np.array([init_t_ww[1][0], init_t_ww[1][1], init_yaw])
+        # t_ww = se3.mul(se3.mul(t_wl, se3.inv(self.t_hee)), se3.inv(self.w_t_bl))
+        # yaw = math.atan2(t_ww[0][1], t_ww[0][0])
+        # w_np = np.array([t_ww[1][0], t_ww[1][1], yaw])
+        # d = w_np[:2] - init_w_np[:2]
+        # dir = np.array([np.cos(init_yaw), np.sin(init_yaw)])
+        # # Project the delta onto the wheelchair's forward direction
+        # w_delta = (d @ dir) * dir
+        # w_np[:2] = init_w_np[:2] + w_delta
+        # w_cfg = self.wu.rcfg_to_cfg(w_np)
+        # self.wheelchair_model.setConfig(w_cfg)
+
+        # for i in range(2):
+        #     if i == 0:
+        #         handle_name = self.left_handle_name
+        #         link = self.robot_model.link(self.left_name)
+        #         dofs = self.left_dofs
+        #     elif i == 1:
+        #         handle_name = self.right_handle_name
+        #         link = self.robot_model.link(self.right_name)
+        #         dofs = self.right_dofs
+        #     else:
+        #         break
+        #     t_wee = se3.mul(
+        #         self.wheelchair_model.link(handle_name).getTransform(),
+        #         self.t_hee)
+        #     goal = ik.objective(link, R=t_wee[0], t=t_wee[1])
+        #     if not ik.solve_nearby(goal, 1, activeDofs=dofs):
+        #         return "ik"
+        # collides = False
+        # for _ in self.collider.collisions():
+        #     collides = True
+        #     break
+        # if self.robot_model.selfCollides() or collides:
+        #     return "collision"
+        # return "success"
 
     def get_configs(self) -> Tuple[List[float], List[float]]:
         return self.robot_model.getConfig(), self.wheelchair_model.getConfig()
@@ -216,12 +299,11 @@ class Tracker:
         return q_dot_part + q_dot_h
 
     def get_ls_soln(self, cfg: List[float], target: np.ndarray):
-        self.fill_ls_params(cfg)
-        self.ls_target_twist_param.value = target
+        self.fill_ls_params(cfg, target)
         res = self.ls_prob.solve()
         return self.ls_q_dot_var.value, res
 
-    def fill_ls_params(self, cfg):
+    def fill_ls_params(self, cfg: List[float], target: np.ndarray):
         self.robot_model.setConfig(cfg)
         # Fill in jacobian param
         self.jac_param.value = self.get_jacobian()
@@ -233,6 +315,7 @@ class Tracker:
         self.p_lower_lim_param.value = -np.sqrt(
             np.maximum(2 * self.a_lim * (j_cfg - self.full_q_lower_lim), 0)
         )
+        self.ls_target_twist_param.value = target
 
     def get_resid_soln(self, cfg: List[float], part_soln: np.ndarray):
         self.fill_resid_params(cfg, part_soln)
