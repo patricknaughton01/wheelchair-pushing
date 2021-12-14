@@ -17,6 +17,7 @@ class Evaluator:
             self.settings = json.load(f)
         self.base_dofs: List[int] = self.settings["base_dofs"]
         self.wheelchair_dofs: List[int] = self.settings["wheelchair_dofs"]
+        self.arm_dofs: List[int] = self.settings["left_arm_dofs"] + self.settings["right_arm_dofs"]
         self.p = p
         self.world_fn = world_fn
         self.world_model = klampt.WorldModel()
@@ -69,7 +70,7 @@ class Evaluator:
         self.stats["execution_time"] += count * self.p.dt
 
     def eval_traj(self):
-        trina_cfg_dist = 0
+        trina_arm_cfg_dist = 0
         trina_base_t_dist = 0
         trina_base_r_dist = 0
         trina_strafe_dist = 0
@@ -86,9 +87,11 @@ class Evaluator:
             wc2 = self.trajectory[i+1][1]
             bc1 = extract_cfg(rc1, self.base_dofs)
             bc2 = extract_cfg(rc2, self.base_dofs)
+            ac1 = extract_cfg(rc1, self.arm_dofs)
+            ac2 = extract_cfg(rc2, self.arm_dofs)
             wbc1 = extract_cfg(wc1, self.wheelchair_dofs)
             wbc2 = extract_cfg(wc2, self.wheelchair_dofs)
-            trina_cfg_dist += vo.norm(vo.sub(rc1, rc2))
+            trina_arm_cfg_dist += vo.norm(vo.sub(ac1, ac2))
             trina_base_t_dist += vo.norm(vo.sub(bc1[:2], bc2[:2]))
             trina_base_r_dist += abs(so2.diff(bc1[2], bc2[2]))
             trina_strafe_dist += abs(bc1[1] - bc2[1])
@@ -102,7 +105,7 @@ class Evaluator:
             last_w_t_vel = w_t_vel
             last_w_r_vel = w_r_vel
         n_a = len(self.trajectory) - 2
-        self.stats["trina_cfg_dist"] = trina_cfg_dist
+        self.stats["trina_arm_cfg_dist"] = trina_arm_cfg_dist
         self.stats["trina_base_t_dist"] = trina_base_t_dist
         self.stats["trina_base_r_dist"] = trina_base_r_dist
         self.stats["trina_strafe_dist"] = trina_strafe_dist

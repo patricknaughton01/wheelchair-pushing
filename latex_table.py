@@ -14,6 +14,7 @@ def main():
         "execution_time",
         "trina_base_t_dist",
         "trina_strafe_dist",
+        "trina_arm_cfg_dist",
         "wheelchair_t_dist",
         "wheelchair_t_accel_rmsa",
         "wheelchair_r_accel_rmsa"
@@ -26,16 +27,18 @@ def main():
     }
     method_name_map = {
         "tracking": "HT",
+        "tracking_cp": "HT (CP)",
+        "tracking_sp": "HT (SP)",
         "state_lattice": "SL",
         "rrt": "KRRT"
     }
     world_order = [
-        "Model/worlds/world_long_turn.xml",
+        "Model/worlds/TRINA_world_cholera.xml",
         "Model/worlds/world_short_turn.xml",
+        "Model/worlds/world_long_turn.xml",
         "Model/worlds/world_corridor.xml",
-        "Model/worlds/TRINA_world_cholera.xml"
     ]
-    method_order = ["tracking", "state_lattice", "rrt"]
+    method_order = ["tracking", "tracking_cp", "tracking_sp", "rrt", "state_lattice"]
 
     for p in args["paths"]:
         with open(p, "r") as f:
@@ -62,7 +65,7 @@ def main():
                 val_str = world_strings[w][method]
                 start_str = ""
                 if j == 0:
-                    start_str = f"\multirow{{3}}{{*}}{{{world_name_map[w]}}} "
+                    start_str = f"\multirow{{5}}{{*}}{{{world_name_map[w]}}} "
                 full_str = f"{start_str}& {method_name_map[method]} {val_str}\\\\"
                 print(full_str)
             if i < len(world_order) - 1:
