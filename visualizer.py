@@ -9,6 +9,7 @@ import numpy as np
 import cv2
 from klampt import vis
 from klampt.vis.glprogram import GLViewport
+from decoupled_rrt_planner import DecoupledRRTPlanner
 from planner import Planner
 
 from tracking_planner import TrackingPlannerInstance
@@ -22,7 +23,7 @@ sim_running_flag = True
 def main():
     global running_flag, sim_running_flag
     parser = argparse.ArgumentParser(description="Test the tracking planner")
-    parser.add_argument("type", type=str, choices=["tracking", "state_lattice"],
+    parser.add_argument("type", type=str, choices=["tracking", "state_lattice", "rrt"],
         help="which planner to use")
     parser.add_argument("-s", action="store_true",
         help="save frames from the simulation")
@@ -35,6 +36,8 @@ def main():
         planner = TrackingPlannerInstance(world_fn, dt)
     elif args["type"] == "state_lattice":
         planner = StateLatticePlanner(sl, world_fn, dt)
+    elif args["type"] == "rrt":
+        planner = DecoupledRRTPlanner(world_fn, dt)
     else:
         raise ValueError("Unknown planner type")
     planner.plan(np.array([0.0, -10.0, 0]), 0.5, 0.1)
