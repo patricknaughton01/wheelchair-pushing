@@ -91,7 +91,7 @@ class RRTPlanner:
         self.dt = dt
         self.exp_dist = exp_dist
 
-        self.res = 0.5
+        self.res = 0.1
 
         # self.cfree_space = self._cfree()
          
@@ -148,7 +148,7 @@ class RRTPlanner:
             
     def _get_nearest(self, node_list, rnd_node):
         
-        dlist = [self._get_dist (node, rnd_node)
+        dlist = [self._get_geo_dist (node, rnd_node)
               for node in node_list]
         minind = dlist.index(min(dlist))
         return minind
@@ -158,8 +158,8 @@ class RRTPlanner:
         new_node_list = []
 
         for i in range(3):
-            vr = random.randint(0,self.EE_vel_lim[0]*10)*0.1
-            vl = random.randint(0,self.EE_vel_lim[1]*10)*0.1 
+            vr = random.randint(0,self.base_v_lim[0]*10)*0.1
+            vl = random.randint(0,self.base_v_lim[1]*10)*0.1 
             v = (vr+vl)/2
             dyaw = (vr-vl)/0.68 #TODO: change to real wb value in CAD
             if abs(dyaw)> self.base_v_lim[2]:
@@ -207,6 +207,13 @@ class RRTPlanner:
         dx = to_node.x - from_node.x
         dy = to_node.y - from_node.y
         d = math.hypot(dx, dy) #TODO Geodesic distance
+        return d
+
+    def _get_geo_dist(self, from_node, to_node) -> float:
+        dx = to_node.x - from_node.x
+        dy = to_node.y - from_node.y
+        # print (math.hypot(dx, dy),so2.diff(to_node.yaw,from_node.yaw))
+        d = math.hypot(dx, dy) + 0.1 * so2.diff(to_node.yaw,from_node.yaw)
         return d
 
     def _collides(self, node) -> bool:
@@ -287,9 +294,9 @@ class RRTPlanner:
             print(abs(yaw_diff))
             pass
 
-        n = int(abs(yaw_diff)/(self.base_v_lim[2]/2*self.dt))
+        n = int(abs(yaw_diff)/(self.base_v_lim[2]*self.dt))
 
-        dyaw = (to_node.yaw-from_node.yaw)/n
+        dyaw = so2.diff(self.end.yaw,from_node.yaw)/n
 
         for i in range(n):
             new_node = self.Node(previous_node.x,previous_node.y,previous_node.yaw)
