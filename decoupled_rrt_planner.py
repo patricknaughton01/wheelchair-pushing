@@ -368,11 +368,11 @@ class DecoupledRRTPlanner:
             self.w_ind += 1
             return new_node
 
-        for i in range (min(2,int(dist/0.01))):
+        for i in range (min(2,int(dist/0.02))):
             # print(check)
-            new_node.x += (0.01/dist)*(to_node.x-from_node.x)
-            new_node.y += (0.01/dist)*(to_node.y-from_node.y)
-            new_node.yaw += (0.01/dist)*so2.diff(to_node.yaw,from_node.yaw)
+            new_node.x += (0.02/dist)*(to_node.x-from_node.x)
+            new_node.y += (0.02/dist)*(to_node.y-from_node.y)
+            new_node.yaw += (0.02/dist)*so2.diff(to_node.yaw,from_node.yaw)
             # new_node.cost += self.get_dist(from_node, new_node)
             new_node.path.append([new_node.x,new_node.y, new_node.yaw])
             new_node.path_x.append(new_node.x)
@@ -409,7 +409,7 @@ class DecoupledRRTPlanner:
     def _get_dist(self, from_node, to_node) -> float:
         dx = to_node.x - from_node.x
         dy = to_node.y - from_node.y
-        d = math.hypot(dx, dy)*(1+abs(from_node.yaw-to_node.yaw)/180*math.pi)
+        d = math.hypot(dx, dy)
         return d
 
     def _collides(self, w_state, r_node) -> bool:
@@ -532,7 +532,7 @@ def mirror_arm_config(config):
 def main():
     import time
     from klampt import vis
-    world_fn = "Model/worlds/world_corridor.xml"
+    world_fn = "Model/worlds/world_short_turn.xml"
     world = klampt.WorldModel()
     world.loadFile(world_fn)
     robot_model = world.robot("trina")
