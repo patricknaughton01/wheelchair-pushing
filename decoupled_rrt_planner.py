@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 import klampt
 from klampt.model import ik, collide
 from klampt.math import vectorops as vo
-from klampt.math import se3, so3
+from klampt.math import se3, so3, so2
 import numpy as np
 import matplotlib.pyplot as plt
 import cvxpy as cp
@@ -372,7 +372,7 @@ class DecoupledRRTPlanner:
             # print(check)
             new_node.x += (0.01/dist)*(to_node.x-from_node.x)
             new_node.y += (0.01/dist)*(to_node.y-from_node.y)
-            new_node.yaw += (0.01/dist)*(to_node.yaw-from_node.yaw)
+            new_node.yaw += (0.01/dist)*so2.diff(to_node.yaw,from_node.yaw)
             # new_node.cost += self.get_dist(from_node, new_node)
             new_node.path.append([new_node.x,new_node.y, new_node.yaw])
             new_node.path_x.append(new_node.x)
